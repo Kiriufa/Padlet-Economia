@@ -4,7 +4,9 @@ import { STATUSES } from './utils.js';
 import { openAddDialog } from './addDialog.js';
 import { buildCard } from './card.js';
 import { imagePaths } from './richtext.js';
-import { openPanel, setPanelContext, refreshPanel, remoteCardUpdate, remoteCardDelete, syncOpenPanel } from './panel.js';
+import { openPanel, setPanelContext, refreshPanel, remoteCardUpdate, remoteCardDelete, syncOpenPanel, isPanelOpen } from './panel.js';
+import { openPreview, refreshPreview, isPreviewOpen } from './preview.js';
+import { initHistory, record, step, peekUndo, peekRedo } from './history.js';
 import { initDnd } from './dnd.js';
 
 // Estado del tablero
@@ -46,8 +48,10 @@ export function openBoard(app, board, user, acts) {
       return moveCard(id, status, last?.id || null, null);
     },
     remove: deleteCardNow,
+    recordSession,
   });
   buildLayout(app);
+  initHistory(`${board.id}-${user.id}`, { onChange: updateHistoryButtons, onDrop: forgetEntry });
   initDnd(ui.board, {
     onStart: () => (S.dragging = true),
     onEnd: () => { S.dragging = false; S.dragEndedAt = Date.now(); if (S.dirty) render(); },
@@ -236,6 +240,7 @@ async function createCard(status, fields) {
     .select().single();
   if (error) throw new Error(error.message);
   upsertLocal(data);
+  record({ type: 'create', id: data.id, title: data.title, card: data, assignees: [] });
   return data;
 }
 
@@ -253,10 +258,27 @@ function addByKind(kind, status, anchor) {
   });
 }
 
+// Tocar una tarjeta: vista previa en grande. El lápiz (o "Editar") abre el panel para cambiarla.
+function previewCard(card, from = null) {
+  if (Date.now() - (S.dragEndedAt || 0) < 400) return; // acaba de arrastrarla
+  const c = S.cards.get(card.id);
+  if (!c) return;
+  openPreview(c, {
+    getCard: (id) => S.cards.get(id),
+    siblings: (x) => sortedCards().filter((y) => y.status === x.status && (visible(y) || y.id === x.id)),
+    edit: (x, f) => openCard(x, f && f.isConnected ? f : cache.get(x.id)?.node || null),
+    member: (u) => S.members.get(u),
+    assigneesOf: (id) => assigneesOf(id),
+    me: () => S.me,
+  }, from);
+}
+
 function openCard(card, from = null) {
   if (Date.now() - (S.dragEndedAt || 0) < 400) return; // acaba de arrastrarla
   openPanel({ card: S.cards.get(card.id) || card, returnFocus: from });
 }
+
+const sortedCards = () => [...S.cards.values()].sort((a, b) => a.position - b.position || a.created_at.localeCompare(b.created_at));
 
 function addRow(status) {
   return el('button', { class: 'add-row', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => openAddMenu(status, e.currentTarget) },
@@ -268,7 +290,9 @@ async function deleteCard(card) {
   if (ok) await deleteCardNow(card);
 }
 
-async function deleteCardNow(card) {
+async function deleteCardNow(card, { silent = false } = {}) {
+  const snap = { ...(S.cards.get(card.id) || card) };
+  const people = [...assigneesOf(card.id)];
   const { error } = await supabase.from('cards').delete().eq('id', card.id);
   if (error) { toast(error.message); return false; }
   // Se encoge y desaparece; las demás suben a ocupar su sitio
@@ -277,10 +301,14 @@ async function deleteCardNow(card) {
     await node.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.9)' }],
       { duration: 180, easing: 'ease-in', fill: 'forwards' }).finished.catch(() => {});
   }
-  const files = [card.file_path, ...imagePaths(card.content)].filter(Boolean);
-  if (files.length) supabase.storage.from(BUCKET).remove(files);
+  // Los archivos no se borran todavía: así "Deshacer" puede recuperar la tarea entera
   S.cards.delete(card.id);
+  S.assignees.delete(card.id);
   render();
+  if (!silent) {
+    record({ type: 'delete', id: snap.id, title: snap.title, card: snap, assignees: people });
+    toast(`Borrada: «${short(snap.title)}»`, { action: { label: 'Deshacer', run: () => undoRedo('undo') } });
+  }
   return true;
 }
 
@@ -314,12 +342,124 @@ async function moveCard(id, status, prevId, nextId) {
   upsertLocal({ ...card, status, position });
   const { error } = await supabase.rpc('move_card', { p_card: id, p_status: status, p_position: position });
   if (error) { toast(error.message); load(); return; }
+  record({ type: 'move', id, title: card.title, from: { status: from, position: card.position }, to: { status, position } });
 
   if (status === 'doing' && from !== 'doing' && assigneesOf(id).size === 0) {
     const yes = await ask({ title: 'Esta tarea no tiene encargado', text: '¿Te la quedas tú?', ok: 'Me la quedo', cancel: 'Ahora no' });
     if (yes) assign(card, S.me);
   }
 }
+
+// ---------------------------------------------------------------------
+// Deshacer / rehacer (borrar, crear, mover y editar)
+// ---------------------------------------------------------------------
+
+const UNDO_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>';
+const REDO_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>';
+const short = (t) => { const x = String(t || 'Sin título'); return x.length > 40 ? `${x.slice(0, 38)}…` : x; };
+const VERB = { delete: 'borrar', create: 'crear', move: 'mover', edit: 'editar' };
+const describe = (e) => `${VERB[e.type] || 'cambiar'} «${short(e.title)}»`;
+
+function updateHistoryButtons() {
+  if (!ui.undoBtn) return;
+  const u = peekUndo(), r = peekRedo();
+  ui.undoBtn.disabled = !u;
+  ui.redoBtn.disabled = !r;
+  ui.undoBtn.title = u ? `Deshacer: ${describe(u)} (Ctrl+Z)` : 'Nada que deshacer';
+  ui.redoBtn.title = r ? `Rehacer: ${describe(r)} (Ctrl+Mayús+Z)` : 'Nada que rehacer';
+}
+
+let historyBusy = false;
+async function undoRedo(dir) {
+  if (historyBusy) return;
+  historyBusy = true;
+  try {
+    const e = await step(dir, applyHistory);
+    if (e) toast(`${dir === 'undo' ? 'Deshecho' : 'Rehecho'}: ${describe(e)}`);
+  } finally { historyBusy = false; }
+}
+
+const EDIT_FIELDS = ['title', 'content', 'description', 'color', 'due_date'];
+const pick = (c) => Object.fromEntries(EDIT_FIELDS.map((k) => [k, c?.[k] ?? null]));
+
+// El panel avisa al cerrarse (o al pasar a otra tarea) de lo que ha cambiado
+function recordSession(before, now) {
+  if (!now) return;
+  if (!before) { record({ type: 'create', id: now.id, title: now.title, card: now, assignees: [...assigneesOf(now.id)] }); return; }
+  const a = pick(before), b = pick(now);
+  if (JSON.stringify(a) === JSON.stringify(b)) return;
+  record({ type: 'edit', id: now.id, title: now.title, before: a, after: b });
+}
+
+async function applyHistory(e, dir) {
+  const undo = dir === 'undo';
+  if (e.type === 'delete') return undo ? restoreEntry(e) : removeEntry(e);
+  if (e.type === 'create') return undo ? removeEntry(e) : restoreEntry(e);
+  const card = S.cards.get(e.id);
+  if (!card) { toast(`«${short(e.title)}» ya no existe`); return 'gone'; }
+  if (e.type === 'move') {
+    const to = undo ? e.from : e.to;
+    upsertLocal({ ...card, ...to });
+    const { error } = await supabase.rpc('move_card', { p_card: e.id, p_status: to.status, p_position: to.position });
+    if (error) { toast(error.message); load(); return false; }
+    showColumn(to.status);
+    highlight([e.id]);
+    return true;
+  }
+  if (e.type === 'edit') {
+    const { data, error } = await supabase.from('cards').update(undo ? e.before : e.after).eq('id', e.id).select().maybeSingle();
+    if (error || !data) { toast(error?.message || 'No se pudo cambiar'); return false; }
+    upsertLocal(data);
+    highlight([e.id]);
+    return true;
+  }
+  return 'gone';
+}
+
+// Vuelve a poner la tarjeta (con su autor, encargados y archivos)
+async function restoreEntry(e) {
+  const { data, error } = await supabase.rpc('restore_card', { p_card: e.card, p_assignees: e.assignees || [] });
+  if (error || !data) { toast(error?.message || 'No se pudo recuperar'); return false; }
+  const row = Array.isArray(data) ? data[0] : data;
+  S.cards.set(row.id, row);
+  for (const u of e.assignees || []) if (S.members.has(u)) addAssignee(row.id, u);
+  render();
+  showColumn(row.status);
+  highlight([row.id]);
+  return true;
+}
+
+// Quita la tarjeta guardando cómo estaba (para poder rehacer)
+async function removeEntry(e) {
+  const now = S.cards.get(e.id);
+  if (!now) return 'gone';
+  e.card = { ...now };
+  e.title = now.title;
+  e.assignees = [...assigneesOf(e.id)];
+  return deleteCardNow(now, { silent: true });
+}
+
+// Una entrada sale del historial para siempre: si su tarjeta ya no existe, se borran sus archivos
+function forgetEntry(e) {
+  if (!e.card || S.cards.has(e.id)) return;
+  const files = [e.card.file_path, ...imagePaths(e.card.content)].filter(Boolean);
+  if (!files.length) return;
+  // Por si otra tarjeta usa la misma imagen (copiada y pegada)
+  const inUse = JSON.stringify([...S.cards.values()].map((c) => [c.file_path, c.content]));
+  const gone = files.filter((f) => !inUse.includes(f));
+  if (gone.length) supabase.storage.from(BUCKET).remove(gone);
+}
+
+// Ctrl/Cmd+Z y Ctrl/Cmd+Mayús+Z (o Ctrl+Y) en el tablero, cuando no se está escribiendo
+document.addEventListener('keydown', (ev) => {
+  if (!S.board || !(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
+  const k = ev.key.toLowerCase();
+  if (k !== 'z' && k !== 'y') return;
+  if (isPanelOpen() || isPreviewOpen() || document.querySelector('dialog[open]')) return;
+  if (ev.target.closest?.('input, textarea, select, [contenteditable=true]')) return;
+  ev.preventDefault();
+  undoRedo(k === 'y' || ev.shiftKey ? 'redo' : 'undo');
+});
 
 async function becomeAdmin() {
   const pin = await ask({ title: 'Entrar como admin', text: 'Escribe el PIN de admin del tablero.', ok: 'Entrar', input: { type: 'password', placeholder: 'PIN', autocomplete: 'off' } });
@@ -406,6 +546,9 @@ function buildLayout(app) {
         ui.adminBadge,
         ui.progress),
       el('div', { class: 'top-actions' },
+        el('div', { class: 'history', role: 'group', 'aria-label': 'Deshacer y rehacer' },
+          ui.undoBtn = el('button', { class: 'icon-btn', type: 'button', disabled: true, 'aria-label': 'Deshacer', html: UNDO_ICON, onclick: () => undoRedo('undo') }),
+          ui.redoBtn = el('button', { class: 'icon-btn', type: 'button', disabled: true, 'aria-label': 'Rehacer', html: REDO_ICON, onclick: () => undoRedo('redo') })),
         el('button', { class: 'btn invite-btn', type: 'button', onclick: openInvite, title: 'Invitar a gente' },
           el('span', { html: ICONS.userPlus }), el('span', { class: 'add-label', text: 'Invitar' })),
         el('button', { class: 'btn primary add-btn', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => openAddMenu('todo', e.currentTarget) },
@@ -567,7 +710,8 @@ function render() {
     claim: (c) => assign(c, S.me),
     leave: (c) => unassign(c, S.me),
     assign: openAssign,
-    open: openCard,
+    open: previewCard,
+    edit: openCard,
     remove: deleteCard,
   };
   const animate = S.rendered && !reducedMotion();
@@ -582,7 +726,7 @@ function render() {
   }
 
   const seen = new Set();
-  const sorted = [...S.cards.values()].sort((a, b) => a.position - b.position || a.created_at.localeCompare(b.created_at));
+  const sorted = sortedCards();
 
   for (const [status] of STATUSES) {
     const list = ui.lists[status];
@@ -606,7 +750,7 @@ function render() {
         } catch (e) {
           // Nunca dejar el tablero en blanco por una tarjeta rara: se muestra una versión mínima
           console.warn('No se pudo dibujar la tarjeta', card.id, e);
-          node = el('article', { class: 'card', 'data-id': card.id, tabindex: '0', onclick: () => openCard(card) }, el('div', { class: 'card-top' }, el('h3', { text: card.title || 'Sin título' })));
+          node = el('article', { class: 'card', 'data-id': card.id, tabindex: '0', onclick: () => previewCard(card) }, el('div', { class: 'card-top' }, el('h3', { text: card.title || 'Sin título' })));
         }
         if (animate && !entry) node.classList.add('enter');
         if (animate && entry && entry.status !== 'done' && card.status === 'done') node.classList.add('just-done');
@@ -643,6 +787,7 @@ function render() {
   ui.progressText.textContent = `${done} de ${total} hechas`;
   S.rendered = true;
   refreshPanel();
+  refreshPreview();
 }
 
 function setCount(node, value, animate) {

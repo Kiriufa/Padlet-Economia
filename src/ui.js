@@ -92,9 +92,16 @@ export function clearFades() {
 }
 
 let toastTimer;
-export function toast(message) {
+/** Aviso breve abajo. Con `action` ({ label, run }) lleva un botón (p. ej. "Deshacer"). */
+export function toast(message, { action = null, ms = action ? 6000 : 3500 } = {}) {
   const t = document.getElementById('toast');
-  t.textContent = message;
+  t.replaceChildren(el('span', { text: message }));
+  if (action) {
+    t.append(el('button', { class: 'toast-action', type: 'button', text: action.label, onclick: () => {
+      t.classList.remove('show');
+      action.run();
+    } }));
+  }
   // Con un panel o una ventana abierta, el aviso tiene que ir por encima (capa superior)
   if (t.showPopover) {
     if (!t.hasAttribute('popover')) t.setAttribute('popover', 'manual');
@@ -109,7 +116,7 @@ export function toast(message) {
   toastTimer = setTimeout(() => {
     t.classList.remove('show');
     setTimeout(() => { if (!t.classList.contains('show')) try { t.hidePopover?.(); } catch {} }, 250);
-  }, 3500);
+  }, ms);
 }
 
 // Diálogo de confirmación/pregunta. Devuelve true/false, o el texto si lleva input.

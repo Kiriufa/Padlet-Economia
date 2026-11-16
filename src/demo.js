@@ -268,6 +268,21 @@ export function createDemoClient() {
       emit('cards', 'UPDATE', c);
       return { data: null, error: null };
     },
+    restore_card({ p_card, p_assignees }) {
+      if (!isMember(p_card?.board_id)) return err('No tienes acceso a este tablero');
+      const had = db.cards.find((x) => x.id === p_card.id);
+      if (had) return { data: had, error: null };
+      const c = { ...p_card, updated_by: user.id, updated_at: now() };
+      db.cards.push(c);
+      emit('cards', 'INSERT', c);
+      for (const u of p_assignees || []) {
+        if (!db.members.some((m) => m.board_id === c.board_id && m.user_id === u)) continue;
+        const a = { card_id: c.id, user_id: u, board_id: c.board_id };
+        db.card_assignees.push(a);
+        emit('card_assignees', 'INSERT', a);
+      }
+      return { data: c, error: null };
+    },
     set_my_name({ p_name }) {
       const name = String(p_name || '').trim();
       if (!name || name.length > 60) return err('El nombre debe tener entre 1 y 60 caracteres');

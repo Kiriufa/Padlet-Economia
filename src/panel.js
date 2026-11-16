@@ -55,6 +55,7 @@ export function openPanel({ card = null, status = 'todo', returnFocus = null, te
 async function switchTo(card, status) {
   await flush();
   if (!P || P.conflict || P.deleted) return;
+  endSession();
   load(card, status);
   setEditorContent(contentOf(card));
   if (!card) P.titleEl.focus();
@@ -74,6 +75,7 @@ export async function closePanel() {
       if (!ok || !P) return;
     }
   }
+  endSession();
   const { dlg, returnFocus, box } = P;
   // Se cierra al momento (la página responde enseguida) y una copia se desvanece encima
   fadeOutCopy(box);
@@ -153,7 +155,14 @@ function contentOf(card) {
   return cleanDoc(card.content) || textToDoc(card.description || '');
 }
 
+// Para "Deshacer" en el tablero: cómo estaba la tarea al abrirla y cómo queda al dejarla
+function endSession() {
+  if (!P?.id || P.conflict || P.deleted) return;
+  try { ctx.recordSession?.(P.before, ctx.getCard(P.id)); } catch (e) { console.warn(e); }
+}
+
 function load(card, status) {
+  P.before = card ? { ...card } : null;
   Object.assign(P, {
     id: card?.id || null,
     version: card?.version || 0,
@@ -562,6 +571,7 @@ async function newAnother() {
   await flush();
   if (!P || P.conflict || P.deleted) return;
   const status = P.status;
+  endSession();
   load(null, status);
   setEditorContent(contentOf(null));
   P.titleEl.focus();

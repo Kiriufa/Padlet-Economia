@@ -23,7 +23,7 @@ En la web publicada también puedes verla añadiendo `?demo` a la dirección.
 1. Entra en [supabase.com](https://supabase.com) → **New project**. Elige un nombre y una contraseña, y espera a que se cree.
 2. Ve a **SQL Editor** → **New query**, pega todo el contenido de [`supabase/schema.sql`](supabase/schema.sql) y pulsa **Run**.
    Así se crean las tablas, la seguridad (RLS), las funciones, el tiempo real y el bucket `uploads`. Se puede ejecutar más de una vez sin problema.
-   **¿Ya tenías el proyecto creado de antes?** Pega también [`supabase/migrations/002_editor.sql`](supabase/migrations/002_editor.sql): añade el texto con formato y convierte las descripciones que ya hubiera.
+   **¿Ya tenías el proyecto creado de antes?** Pega también las migraciones de [`supabase/migrations/`](supabase/migrations/), en orden: `002_editor.sql` (texto con formato) y `003_restore.sql` (deshacer un borrado).
 3. Ve a **Project Settings → API** y copia dos datos:
    - **Project URL**
    - **anon public key**. En los proyectos nuevos se llama *Publishable key*; también sirve.
@@ -85,7 +85,10 @@ Abre http://localhost:5173. El archivo `.env` no se sube a Git: está en `.gitig
 - **Añadir cosas:** pulsa cualquier **+** (en cada columna, "Nueva tarea" arriba o el botón flotante en móvil e iPad vertical) y elige: **Texto**, **Imagen** (una o varias fotos), **Archivo** (PDF, Word, PowerPoint…), **Enlace**, **Vídeo** de YouTube o **Lista de casillas**. Imagen, archivo, enlace y vídeo abren una ventanita con lo que hay que meter (con vista previa), el **título** (se sugiere solo) y el **color**; si luego quieres añadir texto, toca la tarjeta.
   Fotos del Mac, iPhone o iPad: se aceptan en HEIC (se convierten a JPG en Safari) y las muy grandes se reducen solas antes de subirlas.
   Con "Texto" se abre la tarea con el cursor en el título; **Enter** salta al texto. Se guarda sola ("Guardado" arriba). "+ Otra tarea" deja el panel listo para la siguiente.
-- **Escribir con formato:** toca una tarjeta y escribe directamente. La barra de arriba tiene: deshacer/rehacer, Texto normal / Título / Subtítulo (y A+ / A−), negrita, cursiva, subrayado, tachado, 8 colores de texto y 8 de resaltado, viñetas, lista numerada, casillas, enlace y secciones desplegables. Escribe **/** para el menú rápido de bloques.
+- **Ver una tarea:** al tocar una tarjeta se abre en grande para leerla: texto con formato, imágenes, vídeo, PDF (se lee ahí mismo) o enlace. Con las flechas (o ← →) pasas a la anterior o la siguiente de la columna, y "Desplegar todo" abre todas las secciones.
+- **Editar:** botón **Editar** de la vista grande (o tecla E), o el lápiz de la tarjeta.
+- **Deshacer y rehacer:** las flechas de arriba (o Ctrl/Cmd+Z y Ctrl/Cmd+Mayús+Z) deshacen y rehacen lo último que has hecho: borrar, crear, mover o editar una tarea. Al borrar sale también un aviso con "Deshacer". La tarea vuelve con su texto, archivos y encargados, también para los demás. El historial es de cada persona y se guarda en su navegador, aunque recargue la página.
+- **Escribir con formato:** dentro del editor. La barra de arriba tiene: deshacer/rehacer, Texto normal / Título / Subtítulo (y A+ / A−), negrita, cursiva, subrayado, tachado, 8 colores de texto y 8 de resaltado, viñetas, lista numerada, casillas, enlace y secciones desplegables. Escribe **/** para el menú rápido de bloques.
   Atajos: Ctrl/Cmd + B, I, U, Z, Mayús+Z, K (enlace). Esc cierra el menú abierto o el panel.
 - **Imágenes dentro del texto:** botón de imagen, "/imagen", pegar una captura o arrastrar una foto. Se colocan donde esté el cursor; con **Subir/Bajar bloque** (o Alt+↑ / Alt+↓) mueves una imagen o un párrafo arriba o abajo. La primera imagen se ve en la tarjeta del tablero.
 - **Secciones desplegables:** con el botón de la barra o con "/desplegable". Se pueden meter unas dentro de otras; la flechita las abre y cierra. En el tablero, la tarjeta muestra un resumen: primeras líneas, "☑ 2/5" de casillas y número de secciones.
@@ -115,6 +118,8 @@ src/
   main.js       entrar, crear cuenta, mis tableros, unirse y crear tablero
   board.js      tablero: datos, tiempo real, filtros, encargados, admin
   card.js       cómo se pinta cada tarjeta (resumen, imagen, archivo, enlace, YouTube)
+  preview.js    vista previa grande (solo lectura) al tocar una tarjeta
+  history.js    historial de deshacer / rehacer
   panel.js      panel de la tarea: título, editor, encargados, etiqueta, fecha, autoguardado y avisos
   editor.js     editor de texto con formato (Tiptap) y su barra; se carga solo al abrir una tarea
   richtext.js   limpieza del contenido, resumen y texto plano (sin depender del editor)
@@ -125,5 +130,5 @@ src/
   demo.js       modo demo: imita Supabase en el navegador
   styles.css
 supabase/schema.sql   todo el SQL (instalación nueva)
-supabase/migrations/  cambios para proyectos que ya existían (002_editor.sql: texto con formato)
+supabase/migrations/  cambios para proyectos que ya existían (002: texto con formato, 003: deshacer borrados)
 ```
