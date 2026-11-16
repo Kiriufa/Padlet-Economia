@@ -5,6 +5,17 @@ Se entra con Google y el código del tablero.
 
 **Stack:** Vite + JavaScript (sin frameworks) · Supabase (Postgres, Auth, Realtime, Storage) · Vercel
 
+## Probar la demo (sin configurar nada)
+
+```bash
+npm install
+npm run demo
+```
+
+La demo funciona sin Supabase: trae datos de ejemplo y los guarda solo en tu navegador.
+Si abres otra pestaña, entras como otra persona y ves los cambios al momento. El PIN de admin es `1234`.
+En la web publicada también puedes verla añadiendo `?demo` a la dirección.
+
 ---
 
 ## 1. Crear el proyecto en Supabase
@@ -105,6 +116,7 @@ src/
   dnd.js        drag & drop con ratón y táctil, sin librerías
   ui.js         utilidades de interfaz (diálogos, avisos, avatares)
   utils.js      constantes y funciones de apoyo
+  demo.js       modo demo: imita Supabase en el navegador
   styles.css
 supabase/schema.sql   todo el SQL
 ```

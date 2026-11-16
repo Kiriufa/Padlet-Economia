@@ -216,13 +216,17 @@ function buildLayout(app) {
   document.addEventListener('click', (e) => { if (!ui.menu.contains(e.target)) ui.menu.hidden = true; });
 
   ui.adminBadge = el('span', { class: 'badge', text: 'Admin', hidden: true });
+  ui.progressBar = el('span');
+  ui.progressText = el('span');
+  ui.progress = el('div', { class: 'progress', title: 'Tareas hechas' }, el('div', { class: 'progress-bar' }, ui.progressBar), ui.progressText);
 
   const header = el('header', { class: 'topbar' },
     el('div', { class: 'topbar-row' },
       el('div', { class: 'title' },
         el('h1', { text: S.board.name }),
-        el('button', { class: 'code-btn', type: 'button', title: 'Copiar enlace para invitar', onclick: copyLink }, `Código: ${S.board.code}`),
-        ui.adminBadge),
+        el('button', { class: 'code-btn', type: 'button', title: 'Copiar enlace para invitar', onclick: copyLink }, el('span', { html: ICONS.copy }), `Código ${S.board.code}`),
+        ui.adminBadge,
+        ui.progress),
       el('div', { class: 'top-actions' },
         el('button', { class: 'btn primary add-btn', type: 'button', onclick: () => newCard('todo') },
           el('span', { html: ICONS.plus }), el('span', { class: 'add-label', text: 'Nueva tarea' })),
@@ -244,7 +248,7 @@ function buildLayout(app) {
     ui.lists[status] = el('div', { class: 'cards', 'data-status': status });
     ui.columns[status] = el('section', { class: `column col-${status}`, 'data-status': status },
       el('div', { class: 'column-head' },
-        el('h2', {}, el('span', { class: 'dot' }), label),
+        el('h2', {}, el('span', { class: 'state-icon', html: ICONS[status] }), label),
         ui.counts[status],
         el('button', { class: 'icon-btn col-add', type: 'button', title: `Añadir en "${label}"`, 'aria-label': `Añadir en ${label}`, html: ICONS.plus, onclick: () => newCard(status) })),
       ui.lists[status]);
@@ -386,5 +390,11 @@ function render() {
     ui.counts[status].textContent = cards.length;
     ui.tabCounts[status].textContent = cards.length;
   }
+  // Progreso del grupo (sobre todas las tareas, sin filtros)
+  const total = S.cards.size;
+  const done = [...S.cards.values()].filter((c) => c.status === 'done').length;
+  ui.progressBar.style.width = `${total ? Math.round((done / total) * 100) : 0}%`;
+  ui.progressText.textContent = `${done} de ${total} hechas`;
+
   for (const id of cache.keys()) if (!seen.has(id)) { cache.get(id).node.remove(); cache.delete(id); }
 }

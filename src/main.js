@@ -1,5 +1,6 @@
 import './styles.css';
-import { supabase, configured } from './supabase.js';
+import { supabase, configured, DEMO } from './supabase.js';
+import { DEMO_PIN } from './demo.js';
 import { el, toast } from './ui.js';
 import { openBoard } from './board.js';
 
@@ -12,6 +13,9 @@ const store = {
 };
 
 function setUrlCode(code) {
+  try { replaceUrl(code); } catch { /* algunos marcos no dejan cambiar la dirección */ }
+}
+function replaceUrl(code) {
   const url = new URL(location.href);
   if (code) url.searchParams.set('b', code);
   else url.searchParams.delete('b');
@@ -39,6 +43,10 @@ function showLogin() {
   app.replaceChildren(el('main', { class: 'center' },
     el('div', { class: 'panel' },
       logo(),
+      el('div', { class: 'mini-board', 'aria-hidden': 'true' },
+        el('div', { class: 'mini-col' }, el('i'), el('b'), el('b'), el('b')),
+        el('div', { class: 'mini-col' }, el('i'), el('b'), el('b')),
+        el('div', { class: 'mini-col' }, el('i'), el('b'))),
       el('h1', { text: 'Organiza las tareas del grupo' }),
       el('p', { class: 'muted', text: 'Entra con tu cuenta de Google para que todos sepan quién se encarga de cada tarea.' }),
       btn)));
@@ -116,6 +124,19 @@ async function logout() {
   location.reload();
 }
 
+function showDemoBar() {
+  const bar = el('div', { class: 'demo-bar', role: 'note' },
+    el('p', {},
+      el('strong', { text: 'Demo' }),
+      ` · Eres ${supabase.demoUser.name}. Abre otra pestaña para ser otra persona y ver el tiempo real. PIN de admin: ${DEMO_PIN}`),
+    el('button', { class: 'btn small', type: 'button', text: 'Reiniciar', title: 'Volver a los datos de ejemplo', onclick: () => { supabase.resetDemo(); store.set(LAST_BOARD, null); location.reload(); } }),
+    el('button', { class: 'btn small', type: 'button', text: '–', title: 'Minimizar', 'aria-label': 'Minimizar aviso', onclick: (e) => {
+      const min = bar.toggleAttribute('data-min');
+      e.currentTarget.textContent = min ? 'Demo' : '–';
+    } }));
+  document.body.append(bar);
+}
+
 async function start() {
   if (!configured) {
     app.replaceChildren(el('main', { class: 'center' }, el('div', { class: 'panel' },
@@ -126,7 +147,8 @@ async function start() {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return showLogin();
 
-  const code = new URL(location.href).searchParams.get('b') || store.get(LAST_BOARD);
+  if (DEMO) showDemoBar();
+  const code = new URL(location.href).searchParams.get('b') || store.get(LAST_BOARD) || (DEMO ? 'DEMO24' : null);
   setUrlCode(code);
   if (code) join(session.user, code);
   else showJoin(session.user);

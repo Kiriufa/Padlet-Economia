@@ -1,5 +1,5 @@
-import { supabase, BUCKET } from './supabase.js';
-import { el, avatar, ICONS } from './ui.js';
+import { supabase, BUCKET, DEMO } from './supabase.js';
+import { el, avatar, toast, ICONS } from './ui.js';
 import { COLORS, domainOf, extOf, formatDate, formatSize, isOverdue, youtubeId } from './utils.js';
 
 const publicUrl = (path, download) =>
@@ -18,16 +18,21 @@ function content(card) {
         el('div', { class: 'file-info' },
           el('span', { class: 'file-name', text: card.file_name, title: card.file_name }),
           el('span', { class: 'muted small', text: formatSize(card.file_size) })),
-        el('a', { class: 'btn small', href: publicUrl(card.file_path, card.file_name), title: 'Descargar' },
+        el('a', { class: 'btn small', href: publicUrl(card.file_path, card.file_name), title: 'Descargar', onclick: DEMO ? (e) => { e.preventDefault(); toast('En la demo los archivos no se descargan'); } : null },
           el('span', { html: ICONS.download }), 'Descargar'));
     case 'link':
       return el('a', { class: 'linkbox', href: card.url, target: '_blank', rel: 'noopener noreferrer', title: card.url },
-        el('img', { class: 'favicon', alt: '', src: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domainOf(card.url))}&sz=32`, loading: 'lazy', draggable: 'false', onerror: (e) => e.target.remove() }),
+        !DEMO && el('img', { class: 'favicon', alt: '', src: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domainOf(card.url))}&sz=32`, loading: 'lazy', draggable: 'false', onerror: (e) => e.target.remove() }),
         el('span', { class: 'domain', text: domainOf(card.url) }),
         el('span', { class: 'open', html: ICONS.link }));
     case 'youtube': {
       const id = youtubeId(card.url);
       if (!id) return null;
+      // En la demo (sin acceso a YouTube) se abre el vídeo en otra pestaña
+      if (DEMO) {
+        return el('a', { class: 'yt', href: card.url, target: '_blank', rel: 'noopener', title: 'Ver en YouTube' },
+          el('span', { html: ICONS.play }));
+      }
       // Miniatura ligera: el reproductor solo se carga al pulsar
       const box = el('button', { class: 'yt', type: 'button', title: 'Reproducir vídeo', style: `background-image:url(https://i.ytimg.com/vi/${id}/hqdefault.jpg)` },
         el('span', { html: ICONS.play }));

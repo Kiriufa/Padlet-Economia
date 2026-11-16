@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "demo": "vite --mode demo",
+    "build:demo": "vite build --mode demo --outDir dist-demo --base ./"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0"

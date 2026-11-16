@@ -115,6 +115,9 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
   function autoScroll() {
     if (!s?.active) return;
     const { px, py } = s;
+    // No desplazar hasta que la tarjeta se haya movido un poco (si no, al cogerla cerca del borde la página se mueve sola)
+    if (!s.moved) s.moved = Math.hypot(px - s.x, py - s.y) > 40;
+    if (!s.moved) { s.raf = requestAnimationFrame(autoScroll); return; }
     let dy = 0;
     if (py < EDGE) dy = -12;
     else if (py > innerHeight - EDGE) dy = 12;
