@@ -1,5 +1,6 @@
 import { supabase, BUCKET, DEMO } from './supabase.js';
 import { el, avatar, toast, ICONS } from './ui.js';
+import { cleanDoc, summarize } from './richtext.js';
 import { COLORS, domainOf, extOf, formatDate, formatSize, isOverdue, youtubeId } from './utils.js';
 
 const publicUrl = (path, download) =>
@@ -61,14 +62,28 @@ export function buildCard({ card, people, me, editable, handlers, fresh = null }
   const mine = people.some(([u]) => u === me);
   const overdue = isOverdue(card.due_date, card.status);
 
-  return el('article', { class: `card${card.color ? ' tagged' : ''}`, 'data-id': card.id, style: card.color ? `--tag:${COLORS[card.color]}` : '' },
+  const sum = summarize(cleanDoc(card.content), card.description || '');
+  const open = (e) => {
+    // Los botones, enlaces, el asa y los vídeos tienen su propia acción
+    if (e.target.closest('button, a, .drag-handle, iframe, input')) return;
+    handlers.open(card, e.currentTarget);
+  };
+
+  return el('article', {
+    class: `card${card.color ? ' tagged' : ''}`, 'data-id': card.id, style: card.color ? `--tag:${COLORS[card.color]}` : '',
+    tabindex: '0', role: 'button', 'aria-label': `Abrir tarea: ${card.title}`,
+    onclick: open,
+    onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); handlers.open(card, e.currentTarget); } },
+  },
     el('div', { class: 'card-top' },
       el('span', { class: 'drag-handle', title: 'Arrastra desde aquí para mover', 'aria-hidden': 'true' }),
-      el('h3', { class: 'editable', text: card.title, title: 'Haz clic para editar', onclick: (e) => handlers.inline(card, 'title', e.currentTarget) }),
+      el('h3', { text: card.title }),
       editable && el('div', { class: 'card-tools' },
-        el('button', { class: 'icon-btn', type: 'button', title: 'Editar', 'aria-label': 'Editar', html: ICONS.edit, onclick: () => handlers.edit(card) }),
         el('button', { class: 'icon-btn', type: 'button', title: 'Borrar', 'aria-label': 'Borrar', html: ICONS.trash, onclick: () => handlers.remove(card) }))),
-    card.description && el('p', { class: 'desc editable', text: card.description, title: 'Haz clic para editar', onclick: (e) => handlers.inline(card, 'description', e.currentTarget) }),
+    sum.lines.length > 0 && el('div', { class: 'summary' }, ...sum.lines.map((l) => el('p', { text: l }))),
+    (sum.tasks || sum.sections > 0) && el('div', { class: 'summary-chips' },
+      sum.tasks && el('span', { class: `chip-mini${sum.tasks.done === sum.tasks.total ? ' all' : ''}`, title: 'Casillas marcadas' }, `☑ ${sum.tasks.done}/${sum.tasks.total}`),
+      sum.sections > 0 && el('span', { class: 'chip-mini', title: 'Secciones desplegables' }, `▸ ${sum.sections} ${sum.sections === 1 ? 'sección' : 'secciones'}`)),
     content(card),
     card.due_date && el('div', { class: `due${overdue ? ' overdue' : ''}`, title: overdue ? 'Fecha límite pasada' : 'Fecha límite' },
       el('span', { html: ICONS.calendar }), overdue ? `Venció el ${formatDate(card.due_date)}` : formatDate(card.due_date)),

@@ -5,7 +5,7 @@
 
 import { FILE_TYPES, MAX_FILE, extOf } from './utils.js';
 
-const KEY = 'tablero-demo-v1';
+const KEY = 'tablero-demo-v2';
 const PEOPLE = ['Marta Gil', 'Jorge Sanz', 'Lucía Moreno', 'Pablo Ortega', 'Nerea Vidal', 'Hugo Castro'];
 export const DEMO_PIN = '1234';
 
@@ -43,14 +43,34 @@ function seed() {
     [`${B}/plantilla.pptx`]: { url: 'data:text/plain,Plantilla%20de%20ejemplo', type: FILE_TYPES.pptx },
     [`${B}/bibliografia.pdf`]: { url: 'data:text/plain,Bibliografia%20de%20ejemplo', type: FILE_TYPES.pdf },
   };
-  const c = (id, status, position, by, extra) => ({ ...base, id, status, position, created_by: by, created_at: now(), updated_at: now(), ...extra });
+  const c = (id, status, position, by, extra) => ({ ...base, id, status, position, version: 1, content: null, created_by: by, created_at: now(), updated_at: now(), ...extra });
+  const t = (text, marks) => ({ type: 'text', text, ...(marks ? { marks } : {}) });
+  const para = (...kids) => ({ type: 'paragraph', content: kids });
+  const task = (checked, text) => ({ type: 'taskItem', attrs: { checked }, content: [para(t(text))] });
+  const introDoc = { type: 'doc', content: [
+    para(t('Máximo '), t('una página', [{ type: 'bold' }]), t('. Contexto + pregunta del trabajo.')),
+    { type: 'taskList', content: [task(true, 'Leer los apuntes del tema 1'), task(false, 'Escribir el primer borrador'), task(false, 'Pasárselo a Ana para revisar')] },
+    { type: 'details', content: [
+      { type: 'detailsSummary', content: [t('Ideas para empezar')] },
+      { type: 'detailsContent', content: [
+        { type: 'bulletList', content: [
+          { type: 'listItem', content: [para(t('Dato llamativo del INE sobre inflación'))] },
+          { type: 'listItem', content: [para(t('Pregunta: ¿cómo afecta a las tiendas del barrio?', [{ type: 'highlight', attrs: { color: '#fef08a' } }]))] },
+        ] },
+        { type: 'details', content: [
+          { type: 'detailsSummary', content: [t('Fuentes')] },
+          { type: 'detailsContent', content: [para(t('Banco de España, informe trimestral'))] },
+        ] },
+      ] },
+    ] },
+  ] };
   const cards = [
     c('c1', 'todo', 1, p.eva, { title: 'Buscar datos de paro juvenil', description: 'Tasa de paro de 16 a 24 años, últimos 10 años.', kind: 'link', url: 'https://www.ine.es/', color: 'blue', due_date: day(3) }),
     c('c2', 'todo', 2, p.ana, { title: 'Leer el tema 4: el mercado', description: 'Oferta, demanda y precio de equilibrio. Subrayad lo que entre en la presentación.', due_date: day(-2) }),
     c('c3', 'todo', 3, p.luis, { title: 'Vídeo: ¿qué es la inflación?', kind: 'youtube', url: 'https://www.youtube.com/watch?v=Q3TQpIqdd0g' }),
     c('c4', 'todo', 4, p.sofia, { title: 'Plantilla de la presentación', kind: 'file', file_path: `${B}/plantilla.pptx`, file_name: 'Plantilla-Economia.pptx', file_size: 2457600, color: 'purple' }),
     c('c5', 'doing', 1, p.luis, { title: 'Gráfico del PIB 2015-2025', kind: 'image', file_path: `${B}/grafico-pib.svg`, file_name: 'grafico-pib.svg', file_size: 48300, color: 'green' }),
-    c('c6', 'doing', 2, p.ana, { title: 'Redactar la introducción', description: 'Máximo una página. Contexto + pregunta del trabajo.', due_date: day(1), color: 'orange' }),
+    c('c6', 'doing', 2, p.ana, { title: 'Redactar la introducción', description: 'Máximo una página. Contexto + pregunta del trabajo.', content: introDoc, due_date: day(1), color: 'orange' }),
     c('c7', 'doing', 3, p.carlos, { title: 'Encuesta a 20 comercios del barrio', kind: 'link', url: 'https://docs.google.com/forms/', color: 'red', due_date: day(5) }),
     c('c8', 'done', 1, p.ana, { title: 'Elegir el tema del trabajo', description: 'Tema: el impacto de la inflación en el comercio local.' }),
     c('c9', 'done', 2, p.eva, { title: 'Bibliografía inicial', kind: 'file', file_path: `${B}/bibliografia.pdf`, file_name: 'Bibliografia.pdf', file_size: 812000 }),
@@ -164,7 +184,7 @@ export function createDemoClient() {
       if (!isMember(r.board_id)) return err('No perteneces a este tablero');
       if (this.table === 'cards') {
         if (r.kind === 'link' && !/^https?:\/\//i.test(r.url || '')) return err('Enlace no válido');
-        const row = { id: uid(), status: 'todo', position: 0, description: null, kind: 'text', url: null, file_path: null, file_name: null, file_size: null, color: null, due_date: null, ...r, created_by: user.id, created_at: now(), updated_at: now() };
+        const row = { id: uid(), status: 'todo', position: 0, description: null, content: null, kind: 'text', url: null, file_path: null, file_name: null, file_size: null, color: null, due_date: null, ...r, version: 1, updated_by: user.id, created_by: user.id, created_at: now(), updated_at: now() };
         db.cards.push(row);
         emit('cards', 'INSERT', row);
         return this.out([row]);
@@ -182,8 +202,11 @@ export function createDemoClient() {
     update() {
       if (this.table !== 'cards') return this.out([]);
       const rows = this.rows().filter((c) => isMember(c.board_id));
+      const CONTENT = ['title', 'content', 'description', 'color', 'due_date', 'kind', 'url', 'file_path'];
       for (const c of rows) {
-        Object.assign(c, this.payload, { updated_at: now() });
+        const changed = CONTENT.some((k) => k in this.payload && JSON.stringify(this.payload[k]) !== JSON.stringify(c[k]));
+        Object.assign(c, this.payload);
+        if (changed) Object.assign(c, { version: (c.version || 1) + 1, updated_by: user.id, updated_at: now() });
         emit('cards', 'UPDATE', c);
       }
       return this.out(rows);

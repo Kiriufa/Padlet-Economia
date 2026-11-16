@@ -1,8 +1,8 @@
 import { supabase, BUCKET } from './supabase.js';
-import { el, ask, toast, avatar, autosize, ICONS } from './ui.js';
+import { el, ask, toast, avatar, ICONS } from './ui.js';
 import { STATUSES } from './utils.js';
 import { buildCard } from './card.js';
-import { openCardForm } from './cardForm.js';
+import { openPanel, setPanelContext, refreshPanel, remoteCardUpdate, remoteCardDelete } from './panel.js';
 import { initDnd } from './dnd.js';
 
 // Estado del tablero
@@ -28,6 +28,23 @@ export function openBoard(app, board, user, acts) {
   S.board = board;
   S.me = user.id;
   actions = acts;
+  setPanelContext({
+    board: () => S.board,
+    me: () => S.me,
+    getCard: (id) => S.cards.get(id),
+    member: (u) => S.members.get(u),
+    members: () => [...S.members.entries()].sort((a, b) => (a[0] === S.me ? -1 : b[0] === S.me ? 1 : a[1].name.localeCompare(b[1].name))),
+    assigneesOf: (id) => assigneesOf(id),
+    assign: (id, u) => assign({ id }, u),
+    unassign: (id, u) => unassign({ id }, u),
+    upsertLocal,
+    endPosition,
+    move: (id, status) => {
+      const last = [...S.cards.values()].filter((c) => c.status === status && c.id !== id).sort((a, b) => a.position - b.position).pop();
+      return moveCard(id, status, last?.id || null, null);
+    },
+    remove: deleteCardNow,
+  });
   buildLayout(app);
   initDnd(ui.board, {
     onStart: () => (S.dragging = true),
@@ -93,10 +110,16 @@ function subscribe() {
   supabase
     .channel(`board-${id}`)
     .on(...on('INSERT', 'cards', ({ new: c }) => { S.cards.set(c.id, c); render(); }))
-    .on(...on('UPDATE', 'cards', ({ new: c }) => { S.cards.set(c.id, c); render(); }))
+    // Postgres no reenvía los textos largos que no han cambiado: se mezclan con lo que ya teníamos
+    .on(...on('UPDATE', 'cards', ({ new: c }) => {
+      const merged = { ...S.cards.get(c.id), ...c };
+      S.cards.set(c.id, merged);
+      render();
+      remoteCardUpdate(merged);
+    }))
     // Los DELETE no se pueden filtrar: solo traen el id
     .on(...on('DELETE', 'cards', ({ old }) => {
-      if (S.cards.delete(old.id)) { S.assignees.delete(old.id); render(); }
+      if (S.cards.delete(old.id)) { S.assignees.delete(old.id); render(); remoteCardDelete(old.id); }
     }, false))
     .on(...on('INSERT', 'card_assignees', ({ new: a }) => { addAssignee(a.card_id, a.user_id); render(); }))
     .on(...on('DELETE', 'card_assignees', ({ old }) => {
@@ -130,133 +153,34 @@ function endPosition(status) {
   return inCol.length ? Math.max(...inCol.map((c) => c.position)) + 1 : 0;
 }
 
-// Ventana completa (imagen, archivo, enlace, vídeo, color, fecha)
-export async function newCard(status = 'todo', draft = null) {
-  const card = await openCardForm({ board: S.board, status, position: endPosition(status), draft });
-  if (card) { upsertLocal(card); showColumn(status); }
-}
-
-// Primera línea = título; el resto = descripción
-function splitText(value) {
-  const lines = value.replace(/\r/g, '').split('\n');
-  const first = lines.findIndex((l) => l.trim());
-  if (first < 0) return { title: '', description: null };
-  return {
-    title: lines[first].trim().slice(0, 200),
-    description: lines.slice(first + 1).join('\n').trim() || null,
-  };
-}
-
-// Escribir una tarea directamente en la columna
-function addRow(status) {
-  return el('button', { class: 'add-row', type: 'button', onclick: () => openComposer(status) },
-    el('span', { html: ICONS.plus }), 'Añadir tarea');
-}
-
-function closeComposer(status) {
-  ui.composers[status].replaceChildren(addRow(status));
-}
-
-function openComposer(status) {
+// Abrir el panel de una tarea nueva o existente
+export function openNew(status = 'todo', from = null) {
   showColumn(status);
-  for (const [st] of STATUSES) if (st !== status && ui.composers[st].querySelector('form')) closeComposer(st);
-  const slot = ui.composers[status];
-  const existing = slot.querySelector('textarea');
-  if (existing) { existing.focus(); return; }
-
-  const ta = el('textarea', { class: 'composer-input', id: `composer-${status}`, rows: '2', maxlength: '5200', placeholder: 'Escribe la tarea…', 'aria-label': 'Nueva tarea' });
-  const fit = autosize(ta);
-  const addBtn = el('button', { class: 'btn primary small', type: 'submit', text: 'Añadir' });
-  const form = el('form', { class: 'composer' },
-    ta,
-    el('div', { class: 'composer-actions' },
-      addBtn,
-      el('button', { class: 'btn ghost small', type: 'button', text: 'Más opciones', title: 'Imagen, archivo, enlace, vídeo, color o fecha',
-        onclick: () => { const draft = splitText(ta.value); closeComposer(status); newCard(status, draft); } }),
-      el('button', { class: 'icon-btn composer-close', type: 'button', 'aria-label': 'Cerrar', title: 'Cerrar (Esc)', text: '✕', onclick: () => closeComposer(status) })),
-    el('p', { class: 'composer-hint', text: 'Enter para añadir · Mayús+Enter: otra línea (descripción)' }));
-
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const { title, description } = splitText(ta.value);
-    if (!title) { ta.focus(); return; }
-    addBtn.disabled = true;
-    const { data, error } = await supabase.from('cards')
-      .insert({ board_id: S.board.id, status, position: endPosition(status), title, description })
-      .select().single();
-    addBtn.disabled = false;
-    if (error) { toast(error.message); return; }
-    upsertLocal(data);
-    ta.value = '';
-    fit();
-    ta.focus();
-    form.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  };
-  ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
-    else if (e.key === 'Escape') { e.preventDefault(); closeComposer(status); }
-  });
-  // Si se deja vacío y se sale, se cierra solo
-  form.addEventListener('focusout', (e) => {
-    if (form.contains(e.relatedTarget)) return;
-    setTimeout(() => { if (!ta.value.trim() && !form.contains(document.activeElement) && form.isConnected) closeComposer(status); }, 150);
-  });
-
-  slot.replaceChildren(form);
-  ta.focus();
-  form.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  openPanel({ status, returnFocus: from });
 }
 
-// Editar el título o la descripción directamente sobre la tarjeta
-function editInline(card, field, target) {
-  if (S.editing || Date.now() - (S.dragEndedAt || 0) < 400) return;
-  const multiline = field === 'description';
-  S.editing = card.id;
-  const ta = el('textarea', { class: `inline-edit ${field}`, rows: '1', maxlength: multiline ? '5000' : '200',
-    'aria-label': multiline ? 'Descripción' : 'Título' });
-  ta.value = card[field] || '';
-  target.replaceWith(ta);
-  autosize(ta);
-  ta.focus();
-  ta.setSelectionRange(ta.value.length, ta.value.length);
-
-  let done = false;
-  const finish = async (save) => {
-    if (done) return;
-    done = true;
-    S.editing = null;
-    const current = S.cards.get(card.id);
-    const value = multiline ? ta.value.trim() : ta.value.replace(/\s+/g, ' ').trim().slice(0, 200);
-    const changed = current && value !== (current[field] || '') && (value || multiline);
-    const entry = cache.get(card.id);
-    if (entry) entry.key = ''; // fuerza a redibujar la tarjeta
-    if (!save || !changed) { render(); return; }
-    const patch = { [field]: multiline ? (value || null) : value };
-    S.cards.set(card.id, { ...current, ...patch });
-    render();
-    const { error } = await supabase.from('cards').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', card.id);
-    if (error) { toast(error.message); load(); }
-  };
-  ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
-    else if (e.key === 'Enter' && !e.isComposing && (!multiline || e.ctrlKey || e.metaKey)) { e.preventDefault(); finish(true); }
-  });
-  ta.addEventListener('blur', () => finish(true));
+function openCard(card, from = null) {
+  if (Date.now() - (S.dragEndedAt || 0) < 400) return; // acaba de arrastrarla
+  openPanel({ card: S.cards.get(card.id) || card, returnFocus: from });
 }
 
-async function editCard(card) {
-  const saved = await openCardForm({ board: S.board, card });
-  if (saved) upsertLocal(saved);
+function addRow(status) {
+  return el('button', { class: 'add-row', type: 'button', onclick: (e) => openNew(status, e.currentTarget) },
+    el('span', { html: ICONS.plus }), 'Añadir tarea');
 }
 
 async function deleteCard(card) {
   const ok = await ask({ title: '¿Borrar esta tarea?', text: `"${card.title}" se borrará para todos.`, ok: 'Borrar', danger: true });
-  if (!ok) return;
+  if (ok) await deleteCardNow(card);
+}
+
+async function deleteCardNow(card) {
   const { error } = await supabase.from('cards').delete().eq('id', card.id);
-  if (error) return toast(error.message);
+  if (error) { toast(error.message); return false; }
   if (card.file_path) supabase.storage.from(BUCKET).remove([card.file_path]);
   S.cards.delete(card.id);
   render();
+  return true;
 }
 
 async function assign(card, userId) {
@@ -383,7 +307,7 @@ function buildLayout(app) {
       el('div', { class: 'top-actions' },
         el('button', { class: 'btn invite-btn', type: 'button', onclick: openInvite, title: 'Invitar a gente' },
           el('span', { html: ICONS.userPlus }), el('span', { class: 'add-label', text: 'Invitar' })),
-        el('button', { class: 'btn primary add-btn', type: 'button', onclick: () => openComposer('todo') },
+        el('button', { class: 'btn primary add-btn', type: 'button', onclick: (e) => openNew('todo', e.currentTarget) },
           el('span', { html: ICONS.plus }), el('span', { class: 'add-label', text: 'Nueva tarea' })),
         el('div', { class: 'me-wrap' }, ui.menuBtn, ui.menu))),
     el('div', { class: 'topbar-row filters' },
@@ -394,7 +318,7 @@ function buildLayout(app) {
   ui.columns = {};
   ui.lists = {};
   ui.counts = {};
-  ui.composers = {};
+  ui.adds = {};
   ui.tabCounts = {};
   ui.board = el('main', { class: 'board' });
 
@@ -402,14 +326,14 @@ function buildLayout(app) {
     ui.counts[status] = el('span', { class: 'count', text: '0' });
     ui.tabCounts[status] = el('span', { class: 'count', text: '0' });
     ui.lists[status] = el('div', { class: 'cards', 'data-status': status });
-    ui.composers[status] = el('div', { class: 'composer-slot' }, addRow(status));
+    ui.adds[status] = addRow(status);
     ui.columns[status] = el('section', { class: `column col-${status}`, 'data-status': status },
       el('div', { class: 'column-head' },
         el('h2', {}, el('span', { class: 'state-icon', html: ICONS[status] }), label),
         ui.counts[status],
-        el('button', { class: 'icon-btn col-add', type: 'button', title: `Añadir en "${label}"`, 'aria-label': `Añadir en ${label}`, html: ICONS.plus, onclick: () => openComposer(status) })),
+        el('button', { class: 'icon-btn col-add', type: 'button', title: `Añadir en "${label}"`, 'aria-label': `Añadir en ${label}`, html: ICONS.plus, onclick: (e) => openNew(status, e.currentTarget) })),
       ui.lists[status],
-      ui.composers[status]);
+      ui.adds[status]);
     ui.board.append(ui.columns[status]);
     ui.tabs.append(el('button', { class: `tab col-${status}`, type: 'button', 'data-status': status, onclick: () => showColumn(status) }, label, ui.tabCounts[status]));
   }
@@ -425,12 +349,17 @@ function buildLayout(app) {
     if (!ui.popover.hidden && !ui.popover.contains(e.target) && !e.target.closest('.assign-btn')) ui.popover.hidden = true;
   });
 
-  app.replaceChildren(header, ui.tabs, ui.board, ui.popover);
+  // Botón flotante "+" en pantallas pequeñas (crea en la columna que se está viendo)
+  ui.fab = el('button', { class: 'fab', type: 'button', title: 'Nueva tarea', 'aria-label': 'Nueva tarea', html: ICONS.plus,
+    onclick: (e) => openNew(S.activeTab || 'todo', e.currentTarget) });
+
+  app.replaceChildren(header, ui.tabs, ui.board, ui.popover, ui.fab);
   addEventListener('scroll', () => header.classList.toggle('scrolled', scrollY > 4), { passive: true });
   setActiveTab('todo');
 }
 
 function setActiveTab(status) {
+  S.activeTab = status;
   for (const t of ui.tabs.children) t.classList.toggle('active', t.dataset.status === status);
 }
 
@@ -521,8 +450,7 @@ function render() {
     claim: (c) => assign(c, S.me),
     leave: (c) => unassign(c, S.me),
     assign: openAssign,
-    edit: editCard,
-    inline: editInline,
+    open: openCard,
     remove: deleteCard,
   };
   const animate = S.rendered && !reducedMotion();
@@ -550,8 +478,6 @@ function render() {
       const editable = true; // cualquier miembro puede editar y borrar
       const key = JSON.stringify([card, people, editable]);
       let entry = cache.get(card.id);
-      // Mientras alguien escribe en esta tarjeta, no se redibuja (no se pierde el texto)
-      if (entry && S.editing === card.id) return entry.node;
       if (!entry || entry.key !== key) {
         // Encargados recién añadidos (para animar su avatar)
         const fresh = entry && animate ? new Set(ids.filter((u) => !entry.ids.includes(u))) : null;
@@ -590,6 +516,7 @@ function render() {
   ui.progressBar.style.width = `${total ? Math.round((done / total) * 100) : 0}%`;
   ui.progressText.textContent = `${done} de ${total} hechas`;
   S.rendered = true;
+  refreshPanel();
 }
 
 function setCount(node, value, animate) {

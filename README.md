@@ -23,6 +23,7 @@ En la web publicada también puedes verla añadiendo `?demo` a la dirección.
 1. Entra en [supabase.com](https://supabase.com) → **New project**. Elige un nombre y una contraseña, y espera a que se cree.
 2. Ve a **SQL Editor** → **New query**, pega todo el contenido de [`supabase/schema.sql`](supabase/schema.sql) y pulsa **Run**.
    Así se crean las tablas, la seguridad (RLS), las funciones, el tiempo real y el bucket `uploads`. Se puede ejecutar más de una vez sin problema.
+   **¿Ya tenías el proyecto creado de antes?** Pega también [`supabase/migrations/002_editor.sql`](supabase/migrations/002_editor.sql): añade el texto con formato y convierte las descripciones que ya hubiera.
 3. Ve a **Project Settings → API** y copia dos datos:
    - **Project URL**
    - **anon public key**. En los proyectos nuevos se llama *Publishable key*; también sirve.
@@ -81,9 +82,11 @@ Abre http://localhost:5173. El archivo `.env` no se sube a Git: está en `.gitig
 - **Para organizar:** crea tu cuenta (tu nombre, un usuario y una contraseña) → "Crear un tablero nuevo" → elige un nombre y un PIN de admin. Se abre la ventana **Invitar** con el enlace: cópialo o compártelo por WhatsApp, Classroom, etc. También la puedes abrir con el botón **Invitar** de arriba.
 - **Para participar:** abre el enlace → crea tu cuenta (o entra si ya tienes una) → pasas directamente al tablero. En el mismo dispositivo la sesión se queda abierta. También se puede escribir el código en "Unirme con un código".
 - **Mis tableros:** al entrar ves todos tus tableros. Desde el menú del avatar puedes volver a esta lista, cambiar tu nombre o salir de un tablero.
-- **Crear tareas:** pulsa "+ Añadir tarea" al final de una columna (o "Nueva tarea" arriba), escribe y pulsa Enter. El cuadro se queda abierto para la siguiente.
-  La primera línea es el título; con Mayús+Enter escribes debajo la descripción. "Más opciones" abre la ventana completa (imagen, archivo, enlace, YouTube, color o fecha) con lo que ya hayas escrito.
-- **Editar el texto:** haz clic en el título o en la descripción de una tarjeta y escribe ahí mismo. Enter guarda el título (en la descripción, Ctrl+Enter o clic fuera) y Esc cancela.
+- **Crear tareas:** pulsa cualquier **+** (en cada columna, "Nueva tarea" arriba o el botón flotante en móvil e iPad vertical). Se abre la tarea con el cursor en el título; **Enter** salta al texto. Se guarda sola ("Guardado" arriba). "+ Otra tarea" deja el panel listo para la siguiente.
+- **Escribir con formato:** toca una tarjeta y escribe directamente. La barra de arriba tiene: deshacer/rehacer, Texto normal / Título / Subtítulo (y A+ / A−), negrita, cursiva, subrayado, tachado, 8 colores de texto y 8 de resaltado, viñetas, lista numerada, casillas, enlace y secciones desplegables. Escribe **/** para el menú rápido de bloques.
+  Atajos: Ctrl/Cmd + B, I, U, Z, Mayús+Z, K (enlace). Esc cierra el menú abierto o el panel.
+- **Secciones desplegables:** con el botón de la barra o con "/desplegable". Se pueden meter unas dentro de otras; la flechita las abre y cierra. En el tablero, la tarjeta muestra un resumen: primeras líneas, "☑ 2/5" de casillas y número de secciones.
+- **Si dos personas escriben a la vez:** a quien guarda segundo le sale un aviso con "Ver su versión" (lo suyo se copia al portapapeles) o "Guardar la mía encima". Nunca se pisa nada sin avisar.
 - **Quién se encarga:** "Me lo quedo" te apunta a una tarea, "Asignar a…" apunta a otra persona, y "Soltar" te quita. Cada tarjeta muestra los nombres de los encargados.
 - **Mover tarjetas:** arrástralas. En el móvil, mantén el dedo pulsado un momento y arrastra. Para cambiar de columna, lleva el dedo al borde de la pantalla o déjalo un instante sobre la pestaña de arriba.
 - **Admin:** quien crea el tablero es el admin y es el único que puede borrar el tablero entero. Otra cuenta puede hacerse admin desde el menú del avatar → "Entrar como admin (PIN)". Después de 5 PIN incorrectos, esa cuenta queda bloqueada para ese tablero.
@@ -108,12 +111,16 @@ index.html
 src/
   main.js       entrar, crear cuenta, mis tableros, unirse y crear tablero
   board.js      tablero: datos, tiempo real, filtros, encargados, admin
-  card.js       cómo se pinta cada tarjeta (texto, imagen, archivo, enlace, YouTube)
-  cardForm.js   formulario de crear/editar y subida de archivos
+  card.js       cómo se pinta cada tarjeta (resumen, imagen, archivo, enlace, YouTube)
+  panel.js      panel de la tarea: título, editor, encargados, etiqueta, fecha, autoguardado y avisos
+  editor.js     editor de texto con formato (Tiptap) y su barra; se carga solo al abrir una tarea
+  richtext.js   limpieza del contenido, resumen y texto plano (sin depender del editor)
+  cardForm.js   ventana del adjunto (imagen, archivo, enlace, YouTube)
   dnd.js        drag & drop con ratón y táctil, sin librerías
   ui.js         utilidades de interfaz (diálogos, avisos, avatares)
   utils.js      constantes y funciones de apoyo
   demo.js       modo demo: imita Supabase en el navegador
   styles.css
-supabase/schema.sql   todo el SQL
+supabase/schema.sql   todo el SQL (instalación nueva)
+supabase/migrations/  cambios para proyectos que ya existían (002_editor.sql: texto con formato)
 ```

@@ -1,6 +1,6 @@
 import { supabase, BUCKET } from './supabase.js';
-import { el, autosize } from './ui.js';
-import { COLORS, FILE_TYPES, IMAGE_TYPES, MAX_FILE, MAX_FILE_MB, extOf, formatSize, normalizeUrl, youtubeId } from './utils.js';
+import { el } from './ui.js';
+import { FILE_TYPES, IMAGE_TYPES, MAX_FILE, MAX_FILE_MB, extOf, formatSize, normalizeUrl, youtubeId } from './utils.js';
 
 const KINDS = [
   ['text', 'Texto'],
@@ -25,50 +25,34 @@ function checkFile(file, kind) {
 }
 
 /**
- * Abre el formulario para crear (sin card) o editar (con card).
+ * Ventana de adjunto de una tarea (imagen, archivo, enlace o vídeo de YouTube).
+ * El título, el texto, el color y la fecha se editan en el panel de la tarea.
  * Devuelve la tarjeta guardada o null si se cancela.
  */
-export function openCardForm({ board, card = null, status = 'todo', position = 0, draft = null }) {
+export function openAttachmentForm({ board, card }) {
   return new Promise((resolve) => {
     const dlg = document.getElementById('card-dialog');
-    let kind = card?.kind || 'text';
+    let kind = card.kind || 'text';
     let file = null;
     let done = false;
 
-    const title = el('input', { class: 'input', name: 'title', maxlength: '200', required: true, placeholder: '¿Qué hay que hacer?', value: card?.title || draft?.title || '' });
-    const desc = el('textarea', { class: 'input', name: 'desc', rows: '3', maxlength: '5000', placeholder: 'Descripción (opcional)' });
-    desc.value = card?.description || draft?.description || '';
-    autosize(desc);
-    const urlInput = el('input', { class: 'input', type: 'text', inputmode: 'url', autocomplete: 'off', autocapitalize: 'off', placeholder: '', value: ['link', 'youtube'].includes(card?.kind) ? card.url : '' });
+    const urlInput = el('input', { class: 'input', type: 'text', inputmode: 'url', autocomplete: 'off', autocapitalize: 'off', placeholder: '', value: ['link', 'youtube'].includes(card.kind) ? card.url : '' });
     const fileInput = el('input', { type: 'file', class: 'file-input' });
     const fileInfo = el('div', { class: 'file-pick-info' });
     const preview = el('img', { class: 'preview', alt: '', hidden: true });
-    const due = el('input', { class: 'input', type: 'date', value: card?.due_date || '' });
     const err = el('p', { class: 'error' });
-    const save = el('button', { class: 'btn primary', type: 'submit', text: card ? 'Guardar' : 'Crear tarea' });
+    const save = el('button', { class: 'btn primary', type: 'submit', text: 'Guardar adjunto' });
 
-    // Etiqueta de color
-    let color = card?.color || null;
-    const swatches = el('div', { class: 'swatches' });
-    const drawSwatches = () => swatches.replaceChildren(
-      el('button', { type: 'button', class: `swatch none${color ? '' : ' on'}`, title: 'Sin color', 'aria-label': 'Sin color', onclick: () => { color = null; drawSwatches(); } }),
-      ...Object.entries(COLORS).map(([name, hex]) => el('button', {
-        type: 'button', class: `swatch${color === name ? ' on' : ''}`, style: `background:${hex}`, title: name, 'aria-label': name,
-        onclick: () => { color = name; drawSwatches(); },
-      })));
-    drawSwatches();
-
-    // Tipo de contenido
     const kindTabs = el('div', { class: 'seg', role: 'tablist' });
     const kindBody = el('div', { class: 'kind-body' });
     const pickZone = el('label', { class: 'dropzone' }, fileInput, el('span', { class: 'dz-text' }), fileInfo);
 
     const drawKind = () => {
       kindTabs.replaceChildren(...KINDS.map(([k, label]) => el('button', {
-        type: 'button', class: `seg-btn${kind === k ? ' on' : ''}`, role: 'tab', 'aria-selected': String(kind === k), text: label,
+        type: 'button', class: `seg-btn${kind === k ? ' on' : ''}`, role: 'tab', 'aria-selected': String(kind === k), text: k === 'text' ? 'Ninguno' : label,
         onclick: () => { if (kind !== k) { kind = k; file = null; fileInput.value = ''; err.textContent = ''; drawKind(); } },
       })));
-      const keepsFile = card && card.kind === kind && card.file_path;
+      const keepsFile = card.kind === kind && card.file_path;
       fileInfo.textContent = keepsFile ? `Actual: ${card.file_name} (${formatSize(card.file_size)})` : '';
       preview.hidden = !(kind === 'image' && keepsFile);
       if (!preview.hidden) preview.src = supabase.storage.from(BUCKET).getPublicUrl(card.file_path).data.publicUrl;
@@ -81,7 +65,7 @@ export function openCardForm({ board, card = null, status = 'todo', position = 0
         urlInput.placeholder = kind === 'link' ? 'https://…' : 'https://www.youtube.com/watch?v=…';
         kindBody.replaceChildren(urlInput);
       } else {
-        kindBody.replaceChildren();
+        kindBody.replaceChildren(el('p', { class: 'hint', text: 'La tarea no tendrá imagen, archivo, enlace ni vídeo.' }));
       }
     };
 
@@ -97,12 +81,8 @@ export function openCardForm({ board, card = null, status = 'todo', position = 0
     drawKind();
 
     const form = el('form', { class: 'card-form', method: 'dialog' },
-      el('h2', { text: card ? 'Editar tarea' : 'Nueva tarea' }),
-      title, desc,
-      el('div', { class: 'field' }, el('span', { class: 'label', text: 'Contenido' }), kindTabs, kindBody),
-      el('div', { class: 'row wrap' },
-        el('div', { class: 'field' }, el('span', { class: 'label', text: 'Etiqueta' }), swatches),
-        el('label', { class: 'field' }, el('span', { class: 'label', text: 'Fecha límite' }), due)),
+      el('h2', { text: 'Adjunto' }),
+      el('div', { class: 'field' }, kindTabs, kindBody),
       err,
       el('div', { class: 'actions' },
         el('button', { class: 'btn ghost', type: 'button', text: 'Cancelar', onclick: () => dlg.close() }),
@@ -111,18 +91,7 @@ export function openCardForm({ board, card = null, status = 'todo', position = 0
     form.onsubmit = async (e) => {
       e.preventDefault();
       err.textContent = '';
-      const row = {
-        title: title.value.trim(),
-        description: desc.value.trim() || null,
-        kind,
-        color,
-        due_date: due.value || null,
-        url: null,
-        file_path: null,
-        file_name: null,
-        file_size: null,
-      };
-      if (!row.title) return (err.textContent = 'Escribe un título.');
+      const row = { kind, url: null, file_path: null, file_name: null, file_size: null };
 
       if (kind === 'link') {
         row.url = normalizeUrl(urlInput.value);
@@ -133,8 +102,7 @@ export function openCardForm({ board, card = null, status = 'todo', position = 0
         if (!id) return (err.textContent = 'No es un enlace de YouTube válido.');
         row.url = `https://www.youtube.com/watch?v=${id}`;
       }
-
-      const keepsFile = card && card.kind === kind && card.file_path && !file;
+      const keepsFile = card.kind === kind && card.file_path && !file;
       if ((kind === 'image' || kind === 'file') && !file && !keepsFile) {
         return (err.textContent = kind === 'image' ? 'Elige una imagen.' : 'Elige un archivo.');
       }
@@ -154,15 +122,10 @@ export function openCardForm({ board, card = null, status = 'todo', position = 0
           if (error) { uploaded = null; throw error; }
           Object.assign(row, { file_path: uploaded, file_name: file.name, file_size: file.size });
         }
-
-        const query = card
-          ? supabase.from('cards').update({ ...row, updated_at: new Date().toISOString() }).eq('id', card.id)
-          : supabase.from('cards').insert({ ...row, board_id: board.id, status, position });
-        const { data, error } = await query.select().single();
+        const { data, error } = await supabase.from('cards').update(row).eq('id', card.id).select().single();
         if (error) throw error;
-
         // Si se cambió o quitó el archivo, se borra el antiguo
-        if (card?.file_path && card.file_path !== data.file_path) {
+        if (card.file_path && card.file_path !== data.file_path) {
           supabase.storage.from(BUCKET).remove([card.file_path]);
         }
         done = true;
@@ -173,18 +136,12 @@ export function openCardForm({ board, card = null, status = 'todo', position = 0
         const msg = /exceeded|too large|413/i.test(error.message) ? `El archivo supera el máximo permitido (${MAX_FILE_MB} MB).` : error.message;
         err.textContent = `No se pudo guardar: ${msg}`;
         save.disabled = false;
-        save.textContent = card ? 'Guardar' : 'Crear tarea';
+        save.textContent = 'Guardar adjunto';
       }
     };
 
     dlg.onclose = () => { if (!done) resolve(null); };
     dlg.replaceChildren(form);
-    // Ctrl/Cmd + Enter guarda desde cualquier campo
-    form.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); form.requestSubmit(); }
-    });
     dlg.showModal();
-    if (!card) { title.focus(); title.setSelectionRange(title.value.length, title.value.length); }
   });
 }
-
