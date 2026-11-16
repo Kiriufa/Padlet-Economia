@@ -897,6 +897,62 @@ dialog[open]::backdrop { animation: fade-in .2s ease-out; }
 .progress-bar span::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgb(255 255 255 / 55%), transparent); transform: translateX(-100%); animation: shine 2.4s ease-in-out infinite; }
 @keyframes shine { 60%, 100% { transform: translateX(100%); } }
 
+/* ---------------------------------------------------------------------
+   Movimiento general de la página */
+/* Al entrar: la barra de arriba baja, las columnas suben una detrás de otra y luego las tarjetas */
+.topbar { animation: top-in .45s cubic-bezier(.2, .8, .2, 1) backwards; }
+@keyframes top-in { from { opacity: 0; transform: translateY(-12px); } }
+.board.intro .column { animation: col-in .6s cubic-bezier(.2, .9, .25, 1) backwards; }
+.board.intro .column:nth-child(2) { animation-delay: 80ms; }
+.board.intro .column:nth-child(3) { animation-delay: 160ms; }
+@keyframes col-in { from { opacity: 0; transform: translateY(22px) scale(.985); } }
+.card.intro { animation: card-rise .55s cubic-bezier(.2, .9, .25, 1) backwards; animation-delay: calc(140ms + var(--i, 0) * 50ms); }
+@keyframes card-rise { from { opacity: 0; transform: translateY(16px) scale(.96); } }
+/* Pantalla de entrada y lista de tableros */
+.panel { animation: col-in .5s cubic-bezier(.2, .9, .25, 1) backwards; }
+.mini-col b { animation: card-rise .5s cubic-bezier(.2, .9, .25, 1) backwards; animation-delay: .25s; }
+.mini-col:nth-child(2) b { animation-delay: .35s; } .mini-col:nth-child(3) b { animation-delay: .45s; }
+.logo-mark { animation: logo-pop .6s cubic-bezier(.3, 1.6, .5, 1) backwards .1s; }
+@keyframes logo-pop { from { transform: scale(.4) rotate(-20deg); opacity: 0; } }
+.board-item { animation: opt-in .35s cubic-bezier(.2, .8, .2, 1) backwards; }
+.board-item:nth-child(2) { animation-delay: 50ms; } .board-item:nth-child(3) { animation-delay: 100ms; }
+.board-item:nth-child(4) { animation-delay: 150ms; } .board-item:nth-child(5) { animation-delay: 200ms; }
+.board-item:nth-child(n+6) { animation-delay: 250ms; }
+/* Botones: se levantan un poco al pasar por encima y se hunden al pulsar */
+.btn { transition: background .15s, border-color .15s, color .15s, transform .18s cubic-bezier(.3, 1.5, .5, 1), box-shadow .18s; }
+@media (hover: hover) {
+  .btn.primary:hover { transform: translateY(-1px); box-shadow: 0 8px 18px rgb(45 91 215 / 28%); }
+  .icon-btn svg, .tp-icon svg { transition: transform .22s cubic-bezier(.3, 1.6, .5, 1); }
+  .icon-btn:hover svg, .tp-icon:hover svg { transform: scale(1.14); }
+  .card-tools [aria-label="Borrar"]:hover svg { animation: wiggle .45s ease-in-out; }
+  .card-tools .card-edit:hover svg { transform: rotate(-12deg) scale(1.14); }
+  .avatars .avatar:hover { transform: translateY(-2px) scale(1.12); z-index: 1; position: relative; }
+  .fab:hover { transform: scale(1.06) rotate(90deg); }
+  .drag-handle { transition: background .2s, transform .2s cubic-bezier(.3, 1.6, .5, 1); }
+  .card:hover .drag-handle { transform: scale(1.08); }
+}
+@keyframes wiggle { 20% { transform: rotate(-12deg); } 45% { transform: rotate(10deg); } 70% { transform: rotate(-6deg); } 100% { transform: none; } }
+.icon-btn:active svg, .tp-icon:active svg { transform: scale(.88); }
+.history .icon-btn:active svg { transform: rotate(-30deg) scale(.9); }
+.claim:active, .btn.small:active { transform: scale(.93); }
+/* Chips de filtro: el elegido "salta" */
+.chip { transition: background .2s, color .2s, border-color .2s, transform .18s cubic-bezier(.3, 1.5, .5, 1); }
+.chip:active { transform: scale(.94); }
+.chip.active { animation: chip-pop .32s cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes chip-pop { 0% { transform: scale(.9); } 100% { transform: none; } }
+/* Pestañas del móvil: la raya de la activa se desliza */
+.tab { transition: box-shadow .3s cubic-bezier(.2, .8, .2, 1), color .2s, border-color .2s, background .2s; }
+/* Botón flotante: entra con un rebote */
+.fab { transition: transform .25s cubic-bezier(.3, 1.6, .5, 1), box-shadow .2s; animation: logo-pop .55s cubic-bezier(.3, 1.6, .5, 1) backwards .35s; }
+.fab:active { transform: scale(.92); }
+/* Columna vacía mientras se arrastra: el recuadro "late" para invitar a soltar */
+body.is-dragging .cards:empty::after { animation: drop-pulse 1.3s ease-in-out infinite; }
+@keyframes drop-pulse { 50% { background: rgb(45 91 215 / 8%); } }
+/* Columna de destino: el fondo cambia con suavidad */
+.column { transition: background .3s, border-color .3s, box-shadow .3s; }
+/* Barra de progreso: crece con rebote */
+.progress-bar span { transition: width .8s cubic-bezier(.25, 1.3, .4, 1); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -1083,5 +1139,5 @@ button.collage-cell:hover img { transform: scale(1.04); }
   .chip-comments { min-height: 44px; min-width: 52px; padding-inline: 12px; font-size: 13px; }
 }
 /* Mientras se arrastra: todas las columnas llegan hasta abajo (se suelta en cualquier parte) */
-body.is-dragging .board { align-items: stretch; }
+.board.stretch { align-items: stretch; }
 .placeholder-gap { pointer-events: none; }

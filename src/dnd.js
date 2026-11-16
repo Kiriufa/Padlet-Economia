@@ -98,8 +98,8 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
     card.classList.add('dragging');
     card.classList.remove('pressing');
     document.body.classList.add('is-dragging');
-    // Las columnas llegan hasta abajo de la pantalla: se puede soltar en cualquier parte de ellas
-    root.style.minHeight = `${Math.max(root.offsetHeight, Math.round(innerHeight - root.getBoundingClientRect().top))}px`;
+    // Las columnas se estiran (con animación) hasta abajo: se puede soltar en cualquier parte
+    stretchColumns(true);
     navigator.vibrate?.(15);
     onStart();
     highlight();
@@ -293,8 +293,8 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
     root.querySelectorAll('.placeholder-gap').forEach((g) => g.remove());
     const r = placeholder.getBoundingClientRect();
     const finishAll = () => {
-      root.style.minHeight = '';
       done();
+      stretchColumns(false);
       if (target && !reduced()) {
         requestAnimationFrame(() => {
           const n = root.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
@@ -311,6 +311,32 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
     ], { duration: Math.round(Math.min(380, 180 + dist * 0.35)), easing: 'cubic-bezier(.25, 1.15, .4, 1)', fill: 'forwards' });
     anim.onfinish = finishAll;
     anim.oncancel = finishAll;
+  }
+
+  // Estirar / encoger las columnas con una animación elástica, una detrás de otra
+  function stretchColumns(on) {
+    const cols = [...root.querySelectorAll('.column')];
+    const from = cols.map((c) => c.getBoundingClientRect().height); // altura que se ve ahora (aunque esté a medio animar)
+    cols.forEach((c) => c.getAnimations().forEach((a) => { if (a.id === 'stretch') a.cancel(); }));
+    if (on) {
+      root.style.minHeight = `${Math.max(root.offsetHeight, Math.round(innerHeight - root.getBoundingClientRect().top))}px`;
+      root.classList.add('stretch');
+    } else {
+      root.classList.remove('stretch');
+      root.style.minHeight = '';
+    }
+    if (reduced()) return;
+    cols.forEach((c, i) => {
+      const to = c.getBoundingClientRect().height;
+      if (Math.abs(to - from[i]) < 2) return;
+      const a = c.animate([{ height: `${from[i]}px` }, { height: `${to}px` }], {
+        duration: on ? 560 : 420,
+        delay: (on ? i : cols.length - 1 - i) * 55,
+        easing: on ? 'cubic-bezier(.22, 1.22, .36, 1)' : 'cubic-bezier(.3, .85, .3, 1)',
+        fill: 'backwards',
+      });
+      a.id = 'stretch';
+    });
   }
 
   function reset() {

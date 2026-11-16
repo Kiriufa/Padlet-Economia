@@ -766,6 +766,15 @@ function render() {
     remove: deleteCard,
   };
   const animate = S.rendered && !reducedMotion();
+  // Primera vez: las columnas y las tarjetas entran una detrás de otra
+  const intro = !S.rendered && !reducedMotion();
+  if (intro) {
+    ui.board.classList.add('intro');
+    setTimeout(() => {
+      ui.board.classList.remove('intro');
+      ui.board.querySelectorAll('.card.intro').forEach((n) => n.classList.remove('intro'));
+    }, 1600);
+  }
   // FLIP: guardamos dónde estaba cada tarjeta para animar los cambios de sitio
   const before = new Map();
   if (animate) {
@@ -804,6 +813,7 @@ function render() {
           node = el('article', { class: 'card', 'data-id': card.id, tabindex: '0', onclick: () => previewCard(card) }, el('div', { class: 'card-top' }, el('h3', { text: card.title || 'Sin título' })));
         }
         if (animate && !entry) node.classList.add('enter');
+        if (intro) { node.classList.add('intro'); node.style.setProperty('--i', Math.min(cards.indexOf(card), 10)); }
         if (animate && entry && entry.status !== 'done' && card.status === 'done') node.classList.add('just-done');
         // Si se redibuja justo después de añadirla, no pierde el brillo de "recién añadida"
         if (entry?.node.classList.contains('just-added') && Date.now() - (entry.addedAt || 0) < 1500) {
