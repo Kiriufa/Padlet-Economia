@@ -34,10 +34,12 @@ export function openBoard(app, board, user, acts) {
     onStart: () => (S.dragging = true),
     onEnd: () => { S.dragging = false; if (S.dirty) render(); },
     onDrop: moveCard,
-    onTab: (status) => showColumn(status),
+    onTab: (status, scrolling) => (scrolling ? setActiveTab(status) : showColumn(status)),
   });
   subscribe();
   load();
+  // Al volver a la pestaña (o desbloquear el móvil) recargamos por si se perdió algún cambio
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') load(); });
 }
 
 // ---------------------------------------------------------------------
@@ -59,6 +61,19 @@ async function load() {
   for (const a of assignees.data) addAssignee(a.card_id, a.user_id);
   S.members = new Map(members.data.map((m) => [m.user_id, m]));
   render();
+}
+
+// Si aparece alguien que no conocemos (nos perdimos su llegada), recargamos la lista de personas
+let membersTimer = null;
+let membersFetchedAt = 0;
+function refreshMembers() {
+  if (membersTimer || Date.now() - membersFetchedAt < 3000) return;
+  membersTimer = setTimeout(async () => {
+    membersTimer = null;
+    membersFetchedAt = Date.now();
+    const { data } = await supabase.from('members').select('user_id,name,avatar_url,is_admin').eq('board_id', S.board.id);
+    if (data) { S.members = new Map(data.map((m) => [m.user_id, m])); render(); }
+  }, 200);
 }
 
 function addAssignee(cardId, userId) {
@@ -268,6 +283,7 @@ function buildLayout(app) {
   });
 
   app.replaceChildren(header, ui.tabs, ui.board, ui.popover);
+  addEventListener('scroll', () => header.classList.toggle('scrolled', scrollY > 4), { passive: true });
   setActiveTab('todo');
 }
 
@@ -351,6 +367,8 @@ function renderFilters() {
   ui.menuBtn.replaceChildren(avatar(S.members.get(S.me), S.me));
 }
 
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 function render() {
   if (S.dragging) { S.dirty = true; return; }
   S.dirty = false;
@@ -363,6 +381,17 @@ function render() {
     edit: editCard,
     remove: deleteCard,
   };
+  const animate = S.rendered && !reducedMotion();
+  // FLIP: guardamos dónde estaba cada tarjeta para animar los cambios de sitio
+  const before = new Map();
+  if (animate) {
+    for (const [id, { node }] of cache) {
+      if (!node.isConnected) continue;
+      const r = node.getBoundingClientRect();
+      if (r.width) before.set(id, r);
+    }
+  }
+
   const seen = new Set();
   const sorted = [...S.cards.values()].sort((a, b) => a.position - b.position || a.created_at.localeCompare(b.created_at));
 
@@ -373,13 +402,18 @@ function render() {
       seen.add(card.id);
       const ids = [...assigneesOf(card.id)].sort();
       const people = ids.map((u) => [u, S.members.get(u)]);
+      if (people.some(([, m]) => !m)) refreshMembers();
       const editable = canEdit(card);
       const key = JSON.stringify([card, people, editable]);
       let entry = cache.get(card.id);
       if (!entry || entry.key !== key) {
-        const node = buildCard({ card, people, me: S.me, editable, handlers });
+        // Encargados recién añadidos (para animar su avatar)
+        const fresh = entry && animate ? new Set(ids.filter((u) => !entry.ids.includes(u))) : null;
+        const node = buildCard({ card, people, me: S.me, editable, handlers, fresh });
+        if (animate && !entry) node.classList.add('enter');
+        if (animate && entry && entry.status !== 'done' && card.status === 'done') node.classList.add('just-done');
         entry?.node.replaceWith(node);
-        entry = { key, node };
+        entry = { key, node, ids, status: card.status };
         cache.set(card.id, entry);
       }
       return entry.node;
@@ -387,14 +421,34 @@ function render() {
     // Reordenar sin recrear (así un vídeo que se está viendo no se corta)
     nodes.forEach((node, i) => { if (list.children[i] !== node) list.insertBefore(node, list.children[i] || null); });
     while (list.children.length > nodes.length) list.lastChild.remove();
-    ui.counts[status].textContent = cards.length;
-    ui.tabCounts[status].textContent = cards.length;
+    setCount(ui.counts[status], cards.length, animate);
+    setCount(ui.tabCounts[status], cards.length, animate);
   }
+  for (const id of cache.keys()) if (!seen.has(id)) { cache.get(id).node.remove(); cache.delete(id); }
+
+  if (animate) {
+    for (const [id, a] of before) {
+      const node = cache.get(id)?.node;
+      if (!node?.isConnected) continue;
+      const b = node.getBoundingClientRect();
+      const dx = a.left - b.left, dy = a.top - b.top;
+      if (!b.width || (Math.abs(dx) < 1 && Math.abs(dy) < 1)) continue;
+      node.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+        { duration: 320, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+    }
+  }
+
   // Progreso del grupo (sobre todas las tareas, sin filtros)
   const total = S.cards.size;
   const done = [...S.cards.values()].filter((c) => c.status === 'done').length;
   ui.progressBar.style.width = `${total ? Math.round((done / total) * 100) : 0}%`;
   ui.progressText.textContent = `${done} de ${total} hechas`;
+  S.rendered = true;
+}
 
-  for (const id of cache.keys()) if (!seen.has(id)) { cache.get(id).node.remove(); cache.delete(id); }
+function setCount(node, value, animate) {
+  const text = String(value);
+  if (node.textContent === text) return;
+  node.textContent = text;
+  if (animate) node.animate([{ transform: 'scale(1.35)' }, { transform: 'scale(1)' }], { duration: 260, easing: 'ease-out' });
 }

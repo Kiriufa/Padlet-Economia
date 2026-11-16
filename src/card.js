@@ -48,7 +48,7 @@ function content(card) {
   }
 }
 
-export function buildCard({ card, people, me, editable, handlers }) {
+export function buildCard({ card, people, me, editable, handlers, fresh = null }) {
   const mine = people.some(([u]) => u === me);
   const overdue = isOverdue(card.due_date, card.status);
 
@@ -65,7 +65,11 @@ export function buildCard({ card, people, me, editable, handlers }) {
     el('div', { class: 'card-foot' },
       el('div', { class: 'avatars' },
         people.length
-          ? people.map(([u, m]) => avatar(m, u, 'sm'))
+          ? people.map(([u, m]) => {
+            const a = avatar(m, u, 'sm');
+            if (fresh?.has(u)) a.classList.add('pop');
+            return a;
+          })
           : el('span', { class: 'muted small', text: 'Sin encargado' })),
       el('div', { class: 'foot-actions' },
         mine
