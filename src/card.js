@@ -1,0 +1,70 @@
+import { supabase, BUCKET } from './supabase.js';
+import { el, avatar, ICONS } from './ui.js';
+import { COLORS, domainOf, extOf, formatDate, formatSize, isOverdue, youtubeId } from './utils.js';
+
+const publicUrl = (path, download) =>
+  supabase.storage.from(BUCKET).getPublicUrl(path, download ? { download } : undefined).data.publicUrl;
+
+function content(card) {
+  switch (card.kind) {
+    case 'image': {
+      const src = publicUrl(card.file_path);
+      return el('a', { class: 'media', href: src, target: '_blank', rel: 'noopener', title: 'Ver imagen completa' },
+        el('img', { src, alt: card.file_name || card.title, loading: 'lazy', draggable: 'false' }));
+    }
+    case 'file':
+      return el('div', { class: 'file' },
+        el('span', { class: `file-ext ext-${extOf(card.file_name)}`, text: extOf(card.file_name).toUpperCase() || 'FILE' }),
+        el('div', { class: 'file-info' },
+          el('span', { class: 'file-name', text: card.file_name, title: card.file_name }),
+          el('span', { class: 'muted small', text: formatSize(card.file_size) })),
+        el('a', { class: 'btn small', href: publicUrl(card.file_path, card.file_name), title: 'Descargar' },
+          el('span', { html: ICONS.download }), 'Descargar'));
+    case 'link':
+      return el('a', { class: 'linkbox', href: card.url, target: '_blank', rel: 'noopener noreferrer', title: card.url },
+        el('img', { class: 'favicon', alt: '', src: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domainOf(card.url))}&sz=32`, loading: 'lazy', draggable: 'false', onerror: (e) => e.target.remove() }),
+        el('span', { class: 'domain', text: domainOf(card.url) }),
+        el('span', { class: 'open', html: ICONS.link }));
+    case 'youtube': {
+      const id = youtubeId(card.url);
+      if (!id) return null;
+      // Miniatura ligera: el reproductor solo se carga al pulsar
+      const box = el('button', { class: 'yt', type: 'button', title: 'Reproducir vídeo', style: `background-image:url(https://i.ytimg.com/vi/${id}/hqdefault.jpg)` },
+        el('span', { html: ICONS.play }));
+      box.onclick = () => box.replaceWith(el('div', { class: 'yt playing' },
+        el('iframe', {
+          src: `https://www.youtube-nocookie.com/embed/${id}?autoplay=1`,
+          title: card.title, allow: 'autoplay; encrypted-media; picture-in-picture; fullscreen', allowfullscreen: true,
+        })));
+      return box;
+    }
+    default:
+      return null;
+  }
+}
+
+export function buildCard({ card, people, me, editable, handlers }) {
+  const mine = people.some(([u]) => u === me);
+  const overdue = isOverdue(card.due_date, card.status);
+
+  return el('article', { class: `card${card.color ? ' tagged' : ''}`, 'data-id': card.id, style: card.color ? `--tag:${COLORS[card.color]}` : '' },
+    el('div', { class: 'card-top' },
+      el('h3', { text: card.title }),
+      editable && el('div', { class: 'card-tools' },
+        el('button', { class: 'icon-btn', type: 'button', title: 'Editar', 'aria-label': 'Editar', html: ICONS.edit, onclick: () => handlers.edit(card) }),
+        el('button', { class: 'icon-btn', type: 'button', title: 'Borrar', 'aria-label': 'Borrar', html: ICONS.trash, onclick: () => handlers.remove(card) }))),
+    card.description && el('p', { class: 'desc', text: card.description }),
+    content(card),
+    card.due_date && el('div', { class: `due${overdue ? ' overdue' : ''}`, title: overdue ? 'Fecha límite pasada' : 'Fecha límite' },
+      el('span', { html: ICONS.calendar }), overdue ? `Venció el ${formatDate(card.due_date)}` : formatDate(card.due_date)),
+    el('div', { class: 'card-foot' },
+      el('div', { class: 'avatars' },
+        people.length
+          ? people.map(([u, m]) => avatar(m, u, 'sm'))
+          : el('span', { class: 'muted small', text: 'Sin encargado' })),
+      el('div', { class: 'foot-actions' },
+        mine
+          ? el('button', { class: 'btn small ghost', type: 'button', text: 'Soltar', title: 'Quitarme de esta tarea', onclick: () => handlers.leave(card) })
+          : el('button', { class: 'btn small claim', type: 'button', text: 'Me lo quedo', onclick: () => handlers.claim(card) }),
+        el('button', { class: 'icon-btn assign-btn', type: 'button', title: 'Asignar a…', 'aria-label': 'Asignar a…', html: ICONS.userPlus, onclick: (e) => handlers.assign(card, e.currentTarget) }))));
+}
