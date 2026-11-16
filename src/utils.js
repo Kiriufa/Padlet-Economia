@@ -39,7 +39,7 @@ export const FILE_TYPES = {
   ...IMAGE_TYPES,
 };
 
-export const extOf = (name = '') => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
+export const extOf = (name) => (typeof name === 'string' && name.includes('.') ? name.split('.').pop().toLowerCase() : '');
 
 export function formatSize(bytes) {
   if (!bytes && bytes !== 0) return '';

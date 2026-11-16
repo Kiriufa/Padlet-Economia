@@ -7,6 +7,13 @@ const publicUrl = (path, download) =>
   supabase.storage.from(BUCKET).getPublicUrl(path, download ? { download } : undefined).data.publicUrl;
 
 function content(card) {
+  // Datos incompletos (p. ej. un archivo sin ruta): la tarjeta se ve igual, sin esa parte
+  if ((card.kind === 'image' || card.kind === 'file') && !card.file_path) return null;
+  if ((card.kind === 'link' || card.kind === 'youtube') && !card.url) return null;
+  try { return contentInner(card); } catch (e) { console.warn('Adjunto no válido en', card.id, e); return null; }
+}
+
+function contentInner(card) {
   switch (card.kind) {
     case 'image': {
       const src = publicUrl(card.file_path);

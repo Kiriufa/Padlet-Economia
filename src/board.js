@@ -600,7 +600,14 @@ function render() {
       if (!entry || entry.key !== key) {
         // Encargados recién añadidos (para animar su avatar)
         const fresh = entry && animate ? new Set(ids.filter((u) => !entry.ids.includes(u))) : null;
-        const node = buildCard({ card, people, me: S.me, editable, handlers, fresh });
+        let node;
+        try {
+          node = buildCard({ card, people, me: S.me, editable, handlers, fresh });
+        } catch (e) {
+          // Nunca dejar el tablero en blanco por una tarjeta rara: se muestra una versión mínima
+          console.warn('No se pudo dibujar la tarjeta', card.id, e);
+          node = el('article', { class: 'card', 'data-id': card.id, tabindex: '0', onclick: () => openCard(card) }, el('div', { class: 'card-top' }, el('h3', { text: card.title || 'Sin título' })));
+        }
         if (animate && !entry) node.classList.add('enter');
         if (animate && entry && entry.status !== 'done' && card.status === 'done') node.classList.add('just-done');
         entry?.node.replaceWith(node);
