@@ -1,5 +1,5 @@
 import { supabase, BUCKET } from './supabase.js';
-import { el } from './ui.js';
+import { el, autosize } from './ui.js';
 import { COLORS, FILE_TYPES, IMAGE_TYPES, MAX_FILE, MAX_FILE_MB, extOf, formatSize, normalizeUrl, youtubeId } from './utils.js';
 
 const KINDS = [
@@ -28,16 +28,17 @@ function checkFile(file, kind) {
  * Abre el formulario para crear (sin card) o editar (con card).
  * Devuelve la tarjeta guardada o null si se cancela.
  */
-export function openCardForm({ board, card = null, status = 'todo', position = 0 }) {
+export function openCardForm({ board, card = null, status = 'todo', position = 0, draft = null }) {
   return new Promise((resolve) => {
     const dlg = document.getElementById('card-dialog');
     let kind = card?.kind || 'text';
     let file = null;
     let done = false;
 
-    const title = el('input', { class: 'input', name: 'title', maxlength: '200', required: true, placeholder: '¿Qué hay que hacer?', value: card?.title || '' });
+    const title = el('input', { class: 'input', name: 'title', maxlength: '200', required: true, placeholder: '¿Qué hay que hacer?', value: card?.title || draft?.title || '' });
     const desc = el('textarea', { class: 'input', name: 'desc', rows: '3', maxlength: '5000', placeholder: 'Descripción (opcional)' });
-    desc.value = card?.description || '';
+    desc.value = card?.description || draft?.description || '';
+    autosize(desc);
     const urlInput = el('input', { class: 'input', type: 'text', inputmode: 'url', autocomplete: 'off', autocapitalize: 'off', placeholder: '', value: ['link', 'youtube'].includes(card?.kind) ? card.url : '' });
     const fileInput = el('input', { type: 'file', class: 'file-input' });
     const fileInfo = el('div', { class: 'file-pick-info' });
@@ -178,8 +179,12 @@ export function openCardForm({ board, card = null, status = 'todo', position = 0
 
     dlg.onclose = () => { if (!done) resolve(null); };
     dlg.replaceChildren(form);
+    // Ctrl/Cmd + Enter guarda desde cualquier campo
+    form.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); form.requestSubmit(); }
+    });
     dlg.showModal();
-    if (!card) title.focus();
+    if (!card) { title.focus(); title.setSelectionRange(title.value.length, title.value.length); }
   });
 }
 

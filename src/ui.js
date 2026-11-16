@@ -25,6 +25,17 @@ export function avatar(member, userId, size = '') {
   return img;
 }
 
+// Textarea que crece mientras escribes
+export function autosize(ta) {
+  const fit = () => {
+    ta.style.height = 'auto';
+    ta.style.height = `${ta.scrollHeight + 2}px`;
+  };
+  ta.addEventListener('input', fit);
+  requestAnimationFrame(fit);
+  return fit;
+}
+
 let toastTimer;
 export function toast(message) {
   const t = document.getElementById('toast');

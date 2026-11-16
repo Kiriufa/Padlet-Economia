@@ -81,6 +81,9 @@ Abre http://localhost:5173. El archivo `.env` no se sube a Git: está en `.gitig
 - **Para organizar:** crea tu cuenta (tu nombre, un usuario y una contraseña) → "Crear un tablero nuevo" → elige un nombre y un PIN de admin. Se abre la ventana **Invitar** con el enlace: cópialo o compártelo por WhatsApp, Classroom, etc. También la puedes abrir con el botón **Invitar** de arriba.
 - **Para participar:** abre el enlace → crea tu cuenta (o entra si ya tienes una) → pasas directamente al tablero. En el mismo dispositivo la sesión se queda abierta. También se puede escribir el código en "Unirme con un código".
 - **Mis tableros:** al entrar ves todos tus tableros. Desde el menú del avatar puedes volver a esta lista, cambiar tu nombre o salir de un tablero.
+- **Crear tareas:** pulsa "+ Añadir tarea" al final de una columna (o "Nueva tarea" arriba), escribe y pulsa Enter. El cuadro se queda abierto para la siguiente.
+  La primera línea es el título; con Mayús+Enter escribes debajo la descripción. "Más opciones" abre la ventana completa (imagen, archivo, enlace, YouTube, color o fecha) con lo que ya hayas escrito.
+- **Editar el texto:** haz clic en el título o en la descripción de una tarjeta y escribe ahí mismo. Enter guarda el título (en la descripción, Ctrl+Enter o clic fuera) y Esc cancela.
 - **Quién se encarga:** "Me lo quedo" te apunta a una tarea, "Asignar a…" apunta a otra persona, y "Soltar" te quita. Cada tarjeta muestra los nombres de los encargados.
 - **Mover tarjetas:** arrástralas. En el móvil, mantén el dedo pulsado un momento y arrastra. Para cambiar de columna, lleva el dedo al borde de la pantalla o déjalo un instante sobre la pestaña de arriba.
 - **Admin:** quien crea el tablero es el admin y es el único que puede borrar el tablero entero. Otra cuenta puede hacerse admin desde el menú del avatar → "Entrar como admin (PIN)". Después de 5 PIN incorrectos, esa cuenta queda bloqueada para ese tablero.

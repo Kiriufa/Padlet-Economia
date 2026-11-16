@@ -1,5 +1,5 @@
 import { supabase, BUCKET } from './supabase.js';
-import { el, ask, toast, avatar, ICONS } from './ui.js';
+import { el, ask, toast, avatar, autosize, ICONS } from './ui.js';
 import { STATUSES } from './utils.js';
 import { buildCard } from './card.js';
 import { openCardForm } from './cardForm.js';
@@ -31,7 +31,7 @@ export function openBoard(app, board, user, acts) {
   buildLayout(app);
   initDnd(ui.board, {
     onStart: () => (S.dragging = true),
-    onEnd: () => { S.dragging = false; if (S.dirty) render(); },
+    onEnd: () => { S.dragging = false; S.dragEndedAt = Date.now(); if (S.dirty) render(); },
     onDrop: moveCard,
     onTab: (status, scrolling) => (scrolling ? setActiveTab(status) : showColumn(status)),
   });
@@ -124,11 +124,124 @@ function upsertLocal(card) {
   render();
 }
 
-export async function newCard(status = 'todo') {
+// Las tarjetas nuevas van al final de la columna (donde está el cuadro de escribir)
+function endPosition(status) {
   const inCol = [...S.cards.values()].filter((c) => c.status === status);
-  const position = inCol.length ? Math.min(...inCol.map((c) => c.position)) - 1 : 0;
-  const card = await openCardForm({ board: S.board, status, position });
+  return inCol.length ? Math.max(...inCol.map((c) => c.position)) + 1 : 0;
+}
+
+// Ventana completa (imagen, archivo, enlace, vídeo, color, fecha)
+export async function newCard(status = 'todo', draft = null) {
+  const card = await openCardForm({ board: S.board, status, position: endPosition(status), draft });
   if (card) { upsertLocal(card); showColumn(status); }
+}
+
+// Primera línea = título; el resto = descripción
+function splitText(value) {
+  const lines = value.replace(/\r/g, '').split('\n');
+  const first = lines.findIndex((l) => l.trim());
+  if (first < 0) return { title: '', description: null };
+  return {
+    title: lines[first].trim().slice(0, 200),
+    description: lines.slice(first + 1).join('\n').trim() || null,
+  };
+}
+
+// Escribir una tarea directamente en la columna
+function addRow(status) {
+  return el('button', { class: 'add-row', type: 'button', onclick: () => openComposer(status) },
+    el('span', { html: ICONS.plus }), 'Añadir tarea');
+}
+
+function closeComposer(status) {
+  ui.composers[status].replaceChildren(addRow(status));
+}
+
+function openComposer(status) {
+  showColumn(status);
+  for (const [st] of STATUSES) if (st !== status && ui.composers[st].querySelector('form')) closeComposer(st);
+  const slot = ui.composers[status];
+  const existing = slot.querySelector('textarea');
+  if (existing) { existing.focus(); return; }
+
+  const ta = el('textarea', { class: 'composer-input', id: `composer-${status}`, rows: '2', maxlength: '5200', placeholder: 'Escribe la tarea…', 'aria-label': 'Nueva tarea' });
+  const fit = autosize(ta);
+  const addBtn = el('button', { class: 'btn primary small', type: 'submit', text: 'Añadir' });
+  const form = el('form', { class: 'composer' },
+    ta,
+    el('div', { class: 'composer-actions' },
+      addBtn,
+      el('button', { class: 'btn ghost small', type: 'button', text: 'Más opciones', title: 'Imagen, archivo, enlace, vídeo, color o fecha',
+        onclick: () => { const draft = splitText(ta.value); closeComposer(status); newCard(status, draft); } }),
+      el('button', { class: 'icon-btn composer-close', type: 'button', 'aria-label': 'Cerrar', title: 'Cerrar (Esc)', text: '✕', onclick: () => closeComposer(status) })),
+    el('p', { class: 'composer-hint', text: 'Enter para añadir · Mayús+Enter: otra línea (descripción)' }));
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const { title, description } = splitText(ta.value);
+    if (!title) { ta.focus(); return; }
+    addBtn.disabled = true;
+    const { data, error } = await supabase.from('cards')
+      .insert({ board_id: S.board.id, status, position: endPosition(status), title, description })
+      .select().single();
+    addBtn.disabled = false;
+    if (error) { toast(error.message); return; }
+    upsertLocal(data);
+    ta.value = '';
+    fit();
+    ta.focus();
+    form.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeComposer(status); }
+  });
+  // Si se deja vacío y se sale, se cierra solo
+  form.addEventListener('focusout', (e) => {
+    if (form.contains(e.relatedTarget)) return;
+    setTimeout(() => { if (!ta.value.trim() && !form.contains(document.activeElement) && form.isConnected) closeComposer(status); }, 150);
+  });
+
+  slot.replaceChildren(form);
+  ta.focus();
+  form.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+// Editar el título o la descripción directamente sobre la tarjeta
+function editInline(card, field, target) {
+  if (S.editing || Date.now() - (S.dragEndedAt || 0) < 400) return;
+  const multiline = field === 'description';
+  S.editing = card.id;
+  const ta = el('textarea', { class: `inline-edit ${field}`, rows: '1', maxlength: multiline ? '5000' : '200',
+    'aria-label': multiline ? 'Descripción' : 'Título' });
+  ta.value = card[field] || '';
+  target.replaceWith(ta);
+  autosize(ta);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    S.editing = null;
+    const current = S.cards.get(card.id);
+    const value = multiline ? ta.value.trim() : ta.value.replace(/\s+/g, ' ').trim().slice(0, 200);
+    const changed = current && value !== (current[field] || '') && (value || multiline);
+    const entry = cache.get(card.id);
+    if (entry) entry.key = ''; // fuerza a redibujar la tarjeta
+    if (!save || !changed) { render(); return; }
+    const patch = { [field]: multiline ? (value || null) : value };
+    S.cards.set(card.id, { ...current, ...patch });
+    render();
+    const { error } = await supabase.from('cards').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', card.id);
+    if (error) { toast(error.message); load(); }
+  };
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    else if (e.key === 'Enter' && !e.isComposing && (!multiline || e.ctrlKey || e.metaKey)) { e.preventDefault(); finish(true); }
+  });
+  ta.addEventListener('blur', () => finish(true));
 }
 
 async function editCard(card) {
@@ -270,7 +383,7 @@ function buildLayout(app) {
       el('div', { class: 'top-actions' },
         el('button', { class: 'btn invite-btn', type: 'button', onclick: openInvite, title: 'Invitar a gente' },
           el('span', { html: ICONS.userPlus }), el('span', { class: 'add-label', text: 'Invitar' })),
-        el('button', { class: 'btn primary add-btn', type: 'button', onclick: () => newCard('todo') },
+        el('button', { class: 'btn primary add-btn', type: 'button', onclick: () => openComposer('todo') },
           el('span', { html: ICONS.plus }), el('span', { class: 'add-label', text: 'Nueva tarea' })),
         el('div', { class: 'me-wrap' }, ui.menuBtn, ui.menu))),
     el('div', { class: 'topbar-row filters' },
@@ -281,6 +394,7 @@ function buildLayout(app) {
   ui.columns = {};
   ui.lists = {};
   ui.counts = {};
+  ui.composers = {};
   ui.tabCounts = {};
   ui.board = el('main', { class: 'board' });
 
@@ -288,12 +402,14 @@ function buildLayout(app) {
     ui.counts[status] = el('span', { class: 'count', text: '0' });
     ui.tabCounts[status] = el('span', { class: 'count', text: '0' });
     ui.lists[status] = el('div', { class: 'cards', 'data-status': status });
+    ui.composers[status] = el('div', { class: 'composer-slot' }, addRow(status));
     ui.columns[status] = el('section', { class: `column col-${status}`, 'data-status': status },
       el('div', { class: 'column-head' },
         el('h2', {}, el('span', { class: 'state-icon', html: ICONS[status] }), label),
         ui.counts[status],
-        el('button', { class: 'icon-btn col-add', type: 'button', title: `Añadir en "${label}"`, 'aria-label': `Añadir en ${label}`, html: ICONS.plus, onclick: () => newCard(status) })),
-      ui.lists[status]);
+        el('button', { class: 'icon-btn col-add', type: 'button', title: `Añadir en "${label}"`, 'aria-label': `Añadir en ${label}`, html: ICONS.plus, onclick: () => openComposer(status) })),
+      ui.lists[status],
+      ui.composers[status]);
     ui.board.append(ui.columns[status]);
     ui.tabs.append(el('button', { class: `tab col-${status}`, type: 'button', 'data-status': status, onclick: () => showColumn(status) }, label, ui.tabCounts[status]));
   }
@@ -406,6 +522,7 @@ function render() {
     leave: (c) => unassign(c, S.me),
     assign: openAssign,
     edit: editCard,
+    inline: editInline,
     remove: deleteCard,
   };
   const animate = S.rendered && !reducedMotion();
@@ -433,6 +550,8 @@ function render() {
       const editable = true; // cualquier miembro puede editar y borrar
       const key = JSON.stringify([card, people, editable]);
       let entry = cache.get(card.id);
+      // Mientras alguien escribe en esta tarjeta, no se redibuja (no se pierde el texto)
+      if (entry && S.editing === card.id) return entry.node;
       if (!entry || entry.key !== key) {
         // Encargados recién añadidos (para animar su avatar)
         const fresh = entry && animate ? new Set(ids.filter((u) => !entry.ids.includes(u))) : null;
