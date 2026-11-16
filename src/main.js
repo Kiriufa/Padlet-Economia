@@ -19,20 +19,27 @@ function setUrlCode(code) {
     const url = new URL(location.href);
     if (code) url.searchParams.set('b', code);
     else url.searchParams.delete('b');
-    url.searchParams.delete('code'); // restos del login de Google
     url.hash = '';
     history.replaceState(null, '', url);
   } catch { /* algunos marcos no dejan cambiar la dirección */ }
 }
 
+// Usuario + contraseña. Supabase necesita un email, así que usamos uno interno que nadie ve
+// (en un dominio reservado que nunca recibe correo). Se puede cambiar con VITE_USER_DOMAIN.
+const USER_DOMAIN = import.meta.env.VITE_USER_DOMAIN || 'usuarios.invalid';
+const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,29}$/;
+const normUser = (v) => v.trim().toLowerCase();
+const userEmail = (username) => `${username}@${USER_DOMAIN}`;
+
 // Mensajes de Supabase en castellano
 function niceError(error) {
   const m = error?.message || String(error);
-  if (/invalid login credentials/i.test(m)) return 'Email o contraseña incorrectos.';
-  if (/email not confirmed/i.test(m)) return 'Todavía no has confirmado tu email. Revisa tu correo.';
-  if (/already registered|already been registered/i.test(m)) return 'Ya existe una cuenta con ese email. Entra con tu contraseña.';
+  if (/invalid login credentials/i.test(m)) return 'Usuario o contraseña incorrectos.';
+  if (/already registered|already been registered|already exists/i.test(m)) return 'Ese nombre de usuario ya existe. Elige otro.';
+  if (/email not confirmed/i.test(m)) return 'Falta un ajuste en Supabase: desactiva "Confirm email" (mira el README).';
   if (/password should be at least/i.test(m)) return 'La contraseña debe tener al menos 6 caracteres.';
-  if (/unable to validate email|invalid email/i.test(m)) return 'Ese email no es válido.';
+  if (/unable to validate email|invalid/i.test(m) && /email/i.test(m)) return 'Ese nombre de usuario no es válido.';
+  if (/signups not allowed/i.test(m)) return 'El registro está desactivado en Supabase.';
   if (/rate limit/i.test(m)) return 'Demasiados intentos. Espera un momento y vuelve a probar.';
   return m;
 }
@@ -44,8 +51,6 @@ const miniBoard = () => el('div', { class: 'mini-board', 'aria-hidden': 'true' }
   el('div', { class: 'mini-col' }, el('i'), el('b')));
 const screen = (...children) => app.replaceChildren(el('main', { class: 'center' }, el('div', { class: 'panel' }, ...children)));
 
-const GOOGLE_ICON = '<svg viewBox="0 0 48 48" width="18" height="18"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
-
 // ---------------------------------------------------------------------
 // Entrar / crear cuenta
 // ---------------------------------------------------------------------
@@ -53,60 +58,36 @@ const GOOGLE_ICON = '<svg viewBox="0 0 48 48" width="18" height="18"><path fill=
 function showLogin(mode = urlCode() ? 'signup' : 'login') {
   const invited = urlCode();
   const msg = el('p', { class: 'error' });
-  const ok = el('p', { class: 'notice' });
-  const busy = (form, on) => form.querySelectorAll('button, input').forEach((n) => (n.disabled = on));
 
   const nameIn = el('input', { class: 'input', id: 'signup-name', placeholder: 'Tu nombre (lo verán los demás)', maxlength: '60', required: true, autocomplete: 'name' });
-  const emailIn = el('input', { class: 'input', id: 'auth-email', type: 'email', placeholder: 'Email', required: true, autocomplete: 'email' });
+  const userIn = el('input', { class: 'input', id: 'auth-user', placeholder: 'Usuario', required: true, autocomplete: 'username', autocapitalize: 'off', spellcheck: 'false', maxlength: '30' });
   const passIn = el('input', { class: 'input', id: 'auth-pass', type: 'password', placeholder: mode === 'signup' ? 'Contraseña (mín. 6)' : 'Contraseña', minlength: mode === 'signup' ? '6' : null, required: true, autocomplete: mode === 'signup' ? 'new-password' : 'current-password' });
+  const userHint = el('p', { class: 'hint', text: 'Usuario: letras, números, punto o guion (3-30). Apúntate la contraseña: no se puede recuperar.' });
 
   const form = el('form', { class: 'stack' },
     mode === 'signup' && nameIn,
-    emailIn,
+    userIn,
     passIn,
+    mode === 'signup' && userHint,
     el('button', { class: 'btn primary', type: 'submit', text: mode === 'signup' ? 'Crear cuenta' : 'Entrar' }),
-    mode === 'login' && el('button', { class: 'link-btn small-link', type: 'button', text: '¿Olvidaste la contraseña?', onclick: forgot }),
-    msg, ok);
+    msg);
 
   form.onsubmit = async (e) => {
     e.preventDefault();
-    msg.textContent = ''; ok.textContent = '';
-    busy(form, true);
-    if (mode === 'signup') {
-      const { data, error } = await supabase.auth.signUp({
-        email: emailIn.value.trim(),
-        password: passIn.value,
-        options: { data: { full_name: nameIn.value.trim() }, emailRedirectTo: location.href },
-      });
-      busy(form, false);
-      if (error) return (msg.textContent = niceError(error));
-      if (!data.session) {
-        ok.textContent = `Te hemos enviado un correo a ${emailIn.value.trim()}. Ábrelo para confirmar la cuenta y volverás aquí.`;
-        return;
-      }
-      afterLogin(data.session);
-    } else {
-      const { data, error } = await supabase.auth.signInWithPassword({ email: emailIn.value.trim(), password: passIn.value });
-      busy(form, false);
-      if (error) return (msg.textContent = niceError(error));
-      afterLogin(data.session);
+    msg.textContent = '';
+    const username = normUser(userIn.value);
+    if (!USERNAME_RE.test(username)) {
+      msg.textContent = 'El usuario debe tener de 3 a 30 caracteres: letras sin tildes, números, punto, guion o guion bajo.';
+      return;
     }
-  };
-
-  async function forgot() {
-    msg.textContent = ''; ok.textContent = '';
-    const email = emailIn.value.trim();
-    if (!email) { msg.textContent = 'Escribe tu email y vuelve a pulsar.'; emailIn.focus(); return; }
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: location.href });
-    if (error) msg.textContent = niceError(error);
-    else ok.textContent = 'Te hemos enviado un correo para elegir una contraseña nueva.';
-  }
-
-  const google = el('button', { class: 'btn google', type: 'button' }, el('span', { class: 'g', html: GOOGLE_ICON }), 'Continuar con Google');
-  google.onclick = async () => {
-    google.disabled = true;
-    const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.href } });
-    if (error) { msg.textContent = niceError(error); google.disabled = false; }
+    form.querySelectorAll('button, input').forEach((n) => (n.disabled = true));
+    const res = mode === 'signup'
+      ? await supabase.auth.signUp({ email: userEmail(username), password: passIn.value, options: { data: { full_name: nameIn.value.trim(), username } } })
+      : await supabase.auth.signInWithPassword({ email: userEmail(username), password: passIn.value });
+    form.querySelectorAll('button, input').forEach((n) => (n.disabled = false));
+    if (res.error) return (msg.textContent = niceError(res.error));
+    if (!res.data.session) return (msg.textContent = niceError({ message: 'Email not confirmed' }));
+    afterLogin(res.data.session);
   };
 
   const tabs = el('div', { class: 'seg', role: 'tablist' },
@@ -119,12 +100,10 @@ function showLogin(mode = urlCode() ? 'signup' : 'login') {
     el('h1', { text: invited ? 'Te han invitado a un tablero' : 'Organiza las tareas del grupo' }),
     el('p', { class: 'muted', text: invited
       ? 'Crea tu cuenta (o entra si ya tienes una) y pasarás directamente al tablero.'
-      : 'Crea tu cuenta para ver tus tableros y que todos sepan quién se encarga de cada tarea.' }),
+      : 'Tu cuenta guarda tu nombre y los tableros en los que estás.' }),
     tabs,
-    form,
-    el('div', { class: 'divider' }, el('span', { text: 'o' })),
-    google);
-  (mode === 'signup' ? nameIn : emailIn).focus();
+    form);
+  (mode === 'signup' ? nameIn : userIn).focus();
 }
 
 // ---------------------------------------------------------------------
@@ -202,7 +181,8 @@ async function showHome(user, name, errorText = '') {
   screen(
     logo(),
     el('div', { class: 'whoami' },
-      el('span', {}, 'Hola, ', el('strong', { text: name })),
+      el('span', {}, 'Hola, ', el('strong', { text: name }),
+        user.user_metadata?.username && el('span', { class: 'muted small', text: ` · usuario ${user.user_metadata.username}` })),
       el('span', { class: 'whoami-actions' },
         el('button', { class: 'link-btn', type: 'button', text: 'Cambiar nombre', onclick: async () => { const n = await changeName(user); if (n) showHome(user, n); } }),
         el('button', { class: 'link-btn', type: 'button', text: 'Salir', onclick: logout }))),
@@ -276,12 +256,12 @@ async function afterLogin(session) {
   let name = await myName(user);
   if (!name) {
     const meta = user.user_metadata || {};
-    const fromSignup = user.app_metadata?.provider === 'email' && meta.full_name;
-    if (fromSignup) {
-      await supabase.rpc('set_my_name', { p_name: meta.full_name });
-      name = meta.full_name;
+    const fallback = meta.full_name || meta.username || (user.email || '').split('@')[0];
+    if (fallback) {
+      await supabase.rpc('set_my_name', { p_name: fallback });
+      name = fallback;
     } else {
-      name = await askName(user, { prefill: meta.full_name || meta.name || '' });
+      name = await askName(user, { prefill: '' });
     }
   }
   currentName = name;
@@ -314,17 +294,6 @@ async function start() {
       el('a', { class: 'btn', href: '?demo', text: 'Ver la demo' }));
     return;
   }
-
-  // Volver desde el correo de "olvidé mi contraseña"
-  supabase.auth.onAuthStateChange?.((event) => {
-    if (event !== 'PASSWORD_RECOVERY') return;
-    setTimeout(async () => {
-      const password = await ask({ title: 'Elige una contraseña nueva', ok: 'Guardar', cancel: null, input: { type: 'password', minlength: '6', placeholder: 'Contraseña nueva (mín. 6)', autocomplete: 'new-password' } });
-      if (!password) return;
-      const { error } = await supabase.auth.updateUser({ password });
-      toast(error ? niceError(error) : 'Contraseña cambiada');
-    }, 0);
-  });
 
   const { data: { session } } = await supabase.auth.getSession();
   if (DEMO) showDemoBar();

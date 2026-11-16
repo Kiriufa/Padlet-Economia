@@ -1,7 +1,7 @@
 # Tablero de tareas
 
 Tablero tipo Padlet para organizar tareas en grupo, con tres columnas ("Por hacer", "En proceso" y "Hecho"), tarjetas que se arrastran, encargados y tiempo real.
-Cada persona crea su cuenta (con email o con Google) y elige el nombre que verán los demás. Se invita a la gente con un enlace.
+Cada persona crea una cuenta sencilla (usuario y contraseña, sin email) que guarda su nombre y los tableros en los que está. Se invita a la gente con un enlace.
 
 **Stack:** Vite + JavaScript (sin frameworks) · Supabase (Postgres, Auth, Realtime, Storage) · Vercel
 
@@ -27,43 +27,23 @@ En la web publicada también puedes verla añadiendo `?demo` a la dirección.
    - **Project URL**
    - **anon public key**. En los proyectos nuevos se llama *Publishable key*; también sirve.
 
-## 2. Cuentas con email
+## 2. Ajuste obligatorio: desactivar la confirmación por email
 
-En **Authentication → Sign In / Providers → Email**, el proveedor de email viene activado de serie.
+Las cuentas son de **usuario + contraseña**, sin email. Por dentro, Supabase necesita un email, así que la app usa uno interno que nadie ve: `usuario@usuarios.invalid`, un dominio reservado que nunca recibe correo.
 
-> **Importante para un grupo de 30-50 personas:** el correo que Supabase trae de serie solo envía unos pocos emails por hora.
-> Con tanta gente creando cuenta a la vez, los correos de confirmación no llegarían a todos. Tienes dos opciones:
-> - **La más simple:** desactiva **Confirm email** en ese mismo apartado. La gente entra nada más crear la cuenta.
-> - **La más segura:** configura un servidor de correo propio en **Project Settings → Authentication → SMTP Settings** (por ejemplo, Resend o Brevo, que tienen plan gratuito).
+En Supabase → **Authentication → Sign In / Providers → Email**:
+- Deja activado **Enable Email provider**.
+- **Desactiva "Confirm email"** y guarda.
+
+Si no lo desactivas, la gente no podrá entrar después de crear la cuenta.
+
+> **Contraseñas olvidadas:** como no hay email, no se pueden recuperar. Si alguien la olvida, puede crear otro usuario y volver a unirse con el enlace del tablero.
+> Si quieres liberar su usuario antiguo, bórralo en **Authentication → Users**.
 >
-> El correo de "¿Olvidaste la contraseña?" también usa este servidor.
+> Si Supabase rechazara el dominio interno con un error de "email inválido", añade la variable `VITE_USER_DOMAIN` con un dominio tuyo, en `.env` y en Vercel (por ejemplo, `VITE_USER_DOMAIN=usuarios.midominio.com`).
+> No se envía nada a ese dominio. Hazlo antes de que nadie cree cuentas: si lo cambias después, los usuarios ya creados no podrán entrar.
 
-## 3. Activar el inicio de sesión con Google (opcional)
-
-**En Google Cloud** ([console.cloud.google.com](https://console.cloud.google.com)):
-
-1. Crea un proyecto o usa uno que ya tengas.
-2. Ve a **APIs y servicios → Pantalla de consentimiento de OAuth**, elige el tipo **Externo** y rellena el nombre de la app y tu email.
-   Después pulsa **Publicar app**. Si no lo haces, solo podrán entrar las cuentas que añadas como usuarios de prueba.
-3. Ve a **Credenciales → Crear credenciales → ID de cliente de OAuth** y elige el tipo **Aplicación web**.
-   En **URI de redireccionamiento autorizados** pon:
-   ```
-   https://TU-PROYECTO.supabase.co/auth/v1/callback
-   ```
-   (Tu Project URL seguida de `/auth/v1/callback`.)
-4. Copia el **ID de cliente** y el **Secreto de cliente**.
-
-**En Supabase:**
-
-1. Ve a **Authentication → Sign In / Providers → Google**, actívalo, pega el ID y el secreto, y guarda.
-2. Ve a **Authentication → URL Configuration** → **Redirect URLs** y añade:
-   ```
-   http://localhost:5173/**
-   https://TU-APP.vercel.app/**
-   ```
-   La segunda la tendrás después del paso 4. En **Site URL** pon la dirección de Vercel.
-
-## 4. Arrancarlo en local
+## 3. Arrancarlo en local
 
 Necesitas [Node.js](https://nodejs.org) 18 o superior.
 
@@ -82,7 +62,7 @@ VITE_SUPABASE_ANON_KEY=tu-clave-anon
 
 Abre http://localhost:5173. El archivo `.env` no se sube a Git: está en `.gitignore`.
 
-## 5. Subirlo a Vercel
+## 4. Subirlo a Vercel
 
 1. Sube este repositorio a GitHub.
 2. En [vercel.com](https://vercel.com) → **Add New → Project** → importa el repositorio. Vercel detecta Vite solo: el comando de build es `npm run build` y la carpeta de salida es `dist`.
@@ -92,14 +72,14 @@ Abre http://localhost:5173. El archivo `.env` no se sube a Git: está en `.gitig
    | `VITE_SUPABASE_URL` | tu Project URL |
    | `VITE_SUPABASE_ANON_KEY` | tu anon key |
 4. Pulsa **Deploy**.
-5. Copia la dirección que te da Vercel (`https://….vercel.app`) y añádela en Supabase, en **Authentication → URL Configuration** (paso 3). Sin esto no funcionan ni Google ni los enlaces de los correos.
+5. Listo: comparte la dirección que te da Vercel (`https://….vercel.app`).
 
 ---
 
 ## Cómo se usa
 
-- **Para organizar:** crea tu cuenta → "Crear un tablero nuevo" → elige un nombre y un PIN de admin. Se abre la ventana **Invitar** con el enlace: cópialo o compártelo por WhatsApp, Classroom, etc. También la puedes abrir con el botón **Invitar** de arriba.
-- **Para participar:** abre el enlace → crea tu cuenta con tu nombre (o entra si ya tienes una) → pasas directamente al tablero. También se puede escribir el código en "Unirme con un código".
+- **Para organizar:** crea tu cuenta (tu nombre, un usuario y una contraseña) → "Crear un tablero nuevo" → elige un nombre y un PIN de admin. Se abre la ventana **Invitar** con el enlace: cópialo o compártelo por WhatsApp, Classroom, etc. También la puedes abrir con el botón **Invitar** de arriba.
+- **Para participar:** abre el enlace → crea tu cuenta (o entra si ya tienes una) → pasas directamente al tablero. En el mismo dispositivo la sesión se queda abierta. También se puede escribir el código en "Unirme con un código".
 - **Mis tableros:** al entrar ves todos tus tableros. Desde el menú del avatar puedes volver a esta lista, cambiar tu nombre o salir de un tablero.
 - **Quién se encarga:** "Me lo quedo" te apunta a una tarea, "Asignar a…" apunta a otra persona, y "Soltar" te quita. Cada tarjeta muestra los nombres de los encargados.
 - **Mover tarjetas:** arrástralas. En el móvil, mantén el dedo pulsado un momento y arrastra. Para cambiar de columna, lleva el dedo al borde de la pantalla o déjalo un instante sobre la pestaña de arriba.
@@ -107,7 +87,7 @@ Abre http://localhost:5173. El archivo `.env` no se sube a Git: está en `.gitig
 
 ## Seguridad
 
-- Hay que tener cuenta, y solo los miembros de un tablero pueden ver o tocar su contenido.
+- Hay que tener cuenta (usuario y contraseña), y solo los miembros de un tablero pueden ver o tocar su contenido.
 - Row Level Security:
   - Cualquier miembro del tablero puede crear, editar, mover y borrar cualquier tarjeta, y asignar o quitar a cualquier persona del tablero. Al borrar siempre se pide confirmación.
   - Quien no es miembro no puede hacer nada.
@@ -123,7 +103,7 @@ Abre http://localhost:5173. El archivo `.env` no se sube a Git: está en `.gitig
 ```
 index.html
 src/
-  main.js       pantallas de entrada (Google, código, crear tablero)
+  main.js       entrar, crear cuenta, mis tableros, unirse y crear tablero
   board.js      tablero: datos, tiempo real, filtros, encargados, admin
   card.js       cómo se pinta cada tarjeta (texto, imagen, archivo, enlace, YouTube)
   cardForm.js   formulario de crear/editar y subida de archivos
