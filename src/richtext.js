@@ -1,6 +1,15 @@
 // Utilidades para el contenido con formato (documento JSON del editor).
 // No dependen del editor: sirven para el resumen de las tarjetas del tablero.
 
+import { STORAGE_PREFIX, DEMO } from './supabase.js';
+
+// Solo se aceptan imágenes subidas a nuestro almacenamiento (o, en la demo, guardadas en el navegador)
+export function isAllowedImage(src) {
+  if (typeof src !== 'string' || src.length > 3_000_000) return false;
+  if (STORAGE_PREFIX && src.startsWith(STORAGE_PREFIX)) return true;
+  return DEMO && /^(data:image\/(png|jpeg|gif|webp|svg\+xml)[;,]|blob:)/.test(src);
+}
+
 // Paleta corta de colores (texto y resaltado)
 export const TEXT_COLORS = [
   ['Gris', '#6b7280'], ['Rojo', '#dc2626'], ['Naranja', '#ea580c'], ['Ámbar', '#b45309'],
@@ -13,7 +22,7 @@ export const HIGHLIGHTS = [
 
 const ALLOWED_NODES = new Set([
   'doc', 'paragraph', 'text', 'heading', 'bulletList', 'orderedList', 'listItem', 'taskList', 'taskItem',
-  'blockquote', 'horizontalRule', 'hardBreak', 'details', 'detailsSummary', 'detailsContent', 'codeBlock',
+  'blockquote', 'horizontalRule', 'hardBreak', 'details', 'detailsSummary', 'detailsContent', 'codeBlock', 'image',
 ]);
 const ALLOWED_MARKS = new Set(['bold', 'italic', 'underline', 'strike', 'code', 'link', 'textStyle', 'highlight']);
 const textColors = new Set(TEXT_COLORS.map(([, c]) => c));
@@ -30,6 +39,11 @@ export function cleanDoc(doc) {
     if (node.type === 'text') {
       if (typeof node.text !== 'string' || !node.text) return null;
       out.text = node.text;
+    }
+    if (node.type === 'image') {
+      if (!isAllowedImage(node.attrs?.src)) return null;
+      const alt = typeof node.attrs.alt === 'string' ? node.attrs.alt.slice(0, 300) : null;
+      return { type: 'image', attrs: { src: node.attrs.src, alt } };
     }
     if (node.attrs && typeof node.attrs === 'object') {
       const a = {};
@@ -120,17 +134,21 @@ export function docToText(doc) {
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+// Vacío = sin texto y sin imágenes (una tarjeta con solo una foto no está vacía)
 export function isEmptyDoc(doc) {
-  return !doc || !docToText(doc);
+  if (!doc) return true;
+  const hasImage = (n) => n?.type === 'image' || (n?.content || []).some(hasImage);
+  return !docToText(doc) && !hasImage(doc);
 }
 
 // Resumen para la tarjeta cerrada: primeras líneas, casillas y secciones
 export function summarize(doc, fallbackText = '') {
-  if (!doc) return { lines: fallbackText ? fallbackText.split('\n').slice(0, 3) : [], tasks: null, sections: 0 };
-  let done = 0, total = 0, sections = 0;
+  if (!doc) return { lines: fallbackText ? fallbackText.split('\n').slice(0, 3) : [], tasks: null, sections: 0, image: null, images: 0 };
+  let done = 0, total = 0, sections = 0, images = 0, image = null;
   const count = (node) => {
     if (node.type === 'taskItem') { total++; if (node.attrs?.checked) done++; }
     if (node.type === 'details') sections++;
+    if (node.type === 'image') { images++; if (!image) image = node.attrs; }
     (node.content || []).forEach(count);
   };
   count(doc);
@@ -152,5 +170,18 @@ export function summarize(doc, fallbackText = '') {
       if (t) lines.push(t);
     }
   }
-  return { lines, tasks: total ? { done, total } : null, sections };
+  return { lines, tasks: total ? { done, total } : null, sections, image, images };
+}
+
+// Rutas de almacenamiento de las imágenes del texto (para borrarlas con la tarjeta)
+export function imagePaths(doc) {
+  const out = [];
+  const walk = (n) => {
+    if (n?.type === 'image' && STORAGE_PREFIX && typeof n.attrs?.src === 'string' && n.attrs.src.startsWith(STORAGE_PREFIX)) {
+      out.push(decodeURIComponent(n.attrs.src.slice(STORAGE_PREFIX.length).split('?')[0]));
+    }
+    (n?.content || []).forEach(walk);
+  };
+  walk(doc);
+  return out;
 }

@@ -10,3 +10,5 @@ export const DEMO = import.meta.env.VITE_DEMO === '1' || new URLSearchParams(loc
 export const configured = DEMO || Boolean(url && key);
 export const supabase = DEMO ? createDemoClient() : configured ? createClient(url, key) : null;
 export const BUCKET = 'uploads';
+// Dirección pública de los archivos subidos (para validar las imágenes del texto)
+export const STORAGE_PREFIX = url ? `${url.replace(/\/$/, '')}/storage/v1/object/public/${BUCKET}/` : '';

@@ -2,6 +2,7 @@ import { supabase, BUCKET } from './supabase.js';
 import { el, ask, toast, avatar, ICONS } from './ui.js';
 import { STATUSES } from './utils.js';
 import { buildCard } from './card.js';
+import { imagePaths } from './richtext.js';
 import { openPanel, setPanelContext, refreshPanel, remoteCardUpdate, remoteCardDelete, syncOpenPanel } from './panel.js';
 import { initDnd } from './dnd.js';
 
@@ -110,10 +111,17 @@ function subscribe() {
   ];
   supabase
     .channel(`board-${id}`)
-    .on(...on('INSERT', 'cards', ({ new: c }) => { S.cards.set(c.id, c); render(); }))
+    // Los avisos pueden llegar tarde: uno antiguo nunca pisa una versión más nueva
+    .on(...on('INSERT', 'cards', ({ new: c }) => {
+      const mine = S.cards.get(c.id);
+      if (mine && (mine.version || 0) >= (c.version || 0)) return;
+      S.cards.set(c.id, c); render();
+    }))
     // Postgres no reenvía los textos largos que no han cambiado: se mezclan con lo que ya teníamos
     .on(...on('UPDATE', 'cards', ({ new: c }) => {
-      const merged = { ...S.cards.get(c.id), ...c };
+      const mine = S.cards.get(c.id);
+      if (mine && (c.version || 0) < (mine.version || 0)) return;
+      const merged = { ...mine, ...c };
       S.cards.set(c.id, merged);
       render();
       remoteCardUpdate(merged);
@@ -178,7 +186,8 @@ async function deleteCard(card) {
 async function deleteCardNow(card) {
   const { error } = await supabase.from('cards').delete().eq('id', card.id);
   if (error) { toast(error.message); return false; }
-  if (card.file_path) supabase.storage.from(BUCKET).remove([card.file_path]);
+  const files = [card.file_path, ...imagePaths(card.content)].filter(Boolean);
+  if (files.length) supabase.storage.from(BUCKET).remove(files);
   S.cards.delete(card.id);
   render();
   return true;

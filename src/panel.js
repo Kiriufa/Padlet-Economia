@@ -1,9 +1,9 @@
 // Panel de una tarea: título, texto con formato, encargados, etiqueta, fecha y adjunto.
 // Se guarda solo (autoguardado) y avisa si otra persona cambia la misma tarea a la vez.
 
-import { supabase } from './supabase.js';
+import { supabase, BUCKET } from './supabase.js';
 import { el, ask, toast, avatar, autosize, ICONS } from './ui.js';
-import { COLORS, STATUSES, formatDate, isOverdue, domainOf } from './utils.js';
+import { COLORS, STATUSES, formatDate, isOverdue, domainOf, extOf, IMAGE_TYPES, MAX_FILE, MAX_FILE_MB } from './utils.js';
 import { cleanDoc, textToDoc, docToText, isEmptyDoc } from './richtext.js';
 import { openAttachmentForm } from './cardForm.js';
 
@@ -176,6 +176,7 @@ async function mountEditor() {
       layer: P.box,
       content: contentOf(card),
       onChange: editorChanged,
+      uploadImage: uploadInlineImage,
     });
     // Lo que el editor ajusta al cargar (p. ej. un párrafo final) no cuenta como cambio
     P.settling = true;
@@ -186,6 +187,20 @@ async function mountEditor() {
   } catch (e) {
     P.toolbar.replaceChildren(el('span', { class: 'error', text: 'No se pudo cargar el editor. Recarga la página.' }));
   }
+}
+
+// Sube una imagen del texto al almacenamiento del tablero y devuelve su dirección pública
+const MIME_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' };
+async function uploadInlineImage(file) {
+  const ext = extOf(file.name) || MIME_EXT[file.type];
+  if (!IMAGE_TYPES[ext]) throw new Error('Formato de imagen no válido (usa JPG, PNG, GIF o WEBP).');
+  if (file.size > MAX_FILE) throw new Error(`La imagen pesa demasiado (máx. ${MAX_FILE_MB} MB).`);
+  const base = (file.name || 'imagen').replace(/\.[^.]+$/, '').normalize('NFD').replace(/[^\w.-]+/g, '_').slice(-60) || 'imagen';
+  const path = `${ctx.board().id}/${crypto.randomUUID()}-${base}.${ext}`;
+  const named = file.name && extOf(file.name) ? file : new File([file], `${base}.${ext}`, { type: IMAGE_TYPES[ext] });
+  const { error } = await supabase.storage.from(BUCKET).upload(path, named, { contentType: IMAGE_TYPES[ext], upsert: false });
+  if (error) throw new Error(/exceeded|too large|413/i.test(error.message) ? `La imagen pesa demasiado (máx. ${MAX_FILE_MB} MB).` : error.message);
+  return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
 // ---------------------------------------------------------------------

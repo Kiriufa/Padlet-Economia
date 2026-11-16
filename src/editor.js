@@ -9,9 +9,12 @@ import { TaskList, TaskItem } from '@tiptap/extension-list';
 import { Details, DetailsSummary, DetailsContent } from '@tiptap/extension-details';
 import { Placeholder } from '@tiptap/extensions';
 import Suggestion from '@tiptap/suggestion';
+import Image from '@tiptap/extension-image';
+import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import DOMPurify from 'dompurify';
-import { TEXT_COLORS, HIGHLIGHTS } from './richtext.js';
-import { el } from './ui.js';
+import { TEXT_COLORS, HIGHLIGHTS, isAllowedImage } from './richtext.js';
+import { el, toast } from './ui.js';
+import { DEMO } from './supabase.js';
 import { normalizeUrl } from './utils.js';
 
 const SAFE_URL = /^(https?:\/\/|mailto:)/i;
@@ -33,6 +36,9 @@ const I = {
   link: svg('<path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>'),
   details: svg('<path d="m6 9 3 3-3 3"/><path d="M12 12h8"/><path d="M12 18h8" opacity=".5"/><path d="M12 6h8"/>'),
   slash: svg('<path d="M15 4 9 20"/>'),
+  image: svg('<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.8"/><path d="m21 16-5-5L6 20"/>'),
+  up: svg('<path d="M12 19V5M6 11l6-6 6 6"/>'),
+  down: svg('<path d="M12 5v14M6 13l6 6 6-6"/>'),
 };
 
 const STYLES = [
@@ -50,6 +56,7 @@ const BLOCKS = [
   { title: 'Lista numerada', hint: '1, 2, 3…', keys: 'numerada numeros ordenada', run: (c) => c.toggleOrderedList() },
   { title: 'Casillas', hint: 'Lista de tareas', keys: 'casillas checklist tareas check', run: (c) => c.toggleTaskList() },
   { title: 'Desplegable', hint: 'Sección que se abre y se cierra', keys: 'desplegable seccion toggle details', run: (c) => c.setDetails() },
+  { title: 'Imagen', hint: 'Subir una foto o captura', keys: 'imagen foto picture image captura', run: (c) => { window.dispatchEvent(new CustomEvent('rt-pick-image')); return c; } }, // el selector se abre en el mismo toque (Safari lo exige)
   { title: 'Cita', hint: 'Texto destacado', keys: 'cita quote', run: (c) => c.toggleBlockquote() },
   { title: 'Separador', hint: 'Línea horizontal', keys: 'separador linea', run: (c) => c.setHorizontalRule() },
 ];
@@ -122,8 +129,67 @@ const LinkShortcut = (openLink) => Extension.create({
  * Crea el editor dentro de `element` y su barra de herramientas en `toolbar`.
  * `layer` es el contenedor donde se pintan los menús flotantes (dentro del panel).
  */
-export function createRichEditor({ element, toolbar, layer, content, onChange }) {
+export function createRichEditor({ element, toolbar, layer, content, onChange, uploadImage }) {
   let editor;
+
+  // ---- Imágenes dentro del texto ----
+  const insertImages = async (files, pos = null) => {
+    const images = [...files].filter((f) => /^image\//.test(f.type));
+    if (!images.length || !uploadImage) return false;
+    for (const file of images) {
+      toast('Subiendo imagen…');
+      try {
+        const src = await uploadImage(file);
+        if (!isAllowedImage(src)) throw new Error('No se pudo subir la imagen');
+        const node = { type: 'image', attrs: { src, alt: file.name.replace(/\.[^.]+$/, '') } };
+        if (pos != null) { editor.chain().focus().insertContentAt(pos, node).run(); pos = null; }
+        else editor.chain().focus().insertContent(node).run();
+        // Que la imagen no quede seleccionada (lo siguiente la sustituiría): cursor justo debajo
+        if (editor.state.selection instanceof NodeSelection) {
+          const after = editor.state.selection.to;
+          const next = editor.state.doc.resolve(after).nodeAfter;
+          if (next?.isTextblock) editor.commands.setTextSelection(after + 1);
+          else editor.commands.createParagraphNear();
+        }
+        toast('Imagen añadida');
+      } catch (e) {
+        toast(e.message || 'No se pudo subir la imagen');
+      }
+    }
+    return true;
+  };
+  const pickImage = () => {
+    const input = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/gif,image/webp', multiple: true, hidden: true });
+    input.onchange = () => { insertImages(input.files); input.remove(); };
+    document.body.append(input);
+    input.click();
+  };
+  const onPickRequest = () => pickImage();
+  window.addEventListener('rt-pick-image', onPickRequest);
+
+  // ---- Mover el bloque actual (párrafo, imagen, lista…) arriba o abajo ----
+  const moveBlock = (dir) => {
+    const { state, view } = editor;
+    const sel = state.selection;
+    let start, node;
+    if (sel instanceof NodeSelection && sel.$from.depth === 0) { start = sel.from; node = sel.node; }
+    else if (sel.$from.depth >= 1) { start = sel.$from.before(1); node = sel.$from.node(1); }
+    else return false;
+    const end = start + node.nodeSize;
+    const index = state.doc.resolve(start).index(0);
+    const sibling = state.doc.maybeChild(index + dir);
+    if (!sibling) return false;
+    const offset = sel.from - start;
+    let tr = state.tr, newStart;
+    if (dir < 0) { newStart = start - sibling.nodeSize; tr = tr.delete(start, end).insert(newStart, node); }
+    else { tr = tr.insert(end + sibling.nodeSize, node).delete(start, end); newStart = start + sibling.nodeSize; }
+    try {
+      tr = tr.setSelection(sel instanceof NodeSelection ? NodeSelection.create(tr.doc, newStart) : TextSelection.create(tr.doc, newStart + offset));
+    } catch { /* deja la selección por defecto */ }
+    view.dispatch(tr.scrollIntoView());
+    view.focus();
+    return true;
+  };
   const buttons = [];
   let openPop = null;
 
@@ -236,7 +302,11 @@ export function createRichEditor({ element, toolbar, layer, content, onChange })
     btn(I.ordered, 'Lista numerada', () => chain().toggleOrderedList().run(), () => editor.isActive('orderedList')),
     btn(I.task, 'Casillas', () => chain().toggleTaskList().run(), () => editor.isActive('taskList')),
     linkBtn,
+    btn(I.image, 'Imagen (también puedes pegarla o arrastrarla)', pickImage),
     btn(I.details, 'Sección desplegable', () => chain().setDetails().run(), () => editor.isActive('details')),
+    sep(),
+    btn(I.up, 'Subir bloque (Alt+↑)', () => moveBlock(-1)),
+    btn(I.down, 'Bajar bloque (Alt+↓)', () => moveBlock(1)),
     sep(),
     btn(I.slash, 'Insertar bloque (escribe /)', () => chain().insertContent('/').run()),
   );
@@ -299,6 +369,11 @@ export function createRichEditor({ element, toolbar, layer, content, onChange })
       }),
       slashMenu(layer),
       LinkShortcut(() => openLink()),
+      Image.configure({ inline: false, allowBase64: DEMO, HTMLAttributes: { class: 'rt-img', loading: 'lazy' } }),
+      Extension.create({
+        name: 'moveBlocks',
+        addKeyboardShortcuts() { return { 'Alt-ArrowUp': () => moveBlock(-1), 'Alt-ArrowDown': () => moveBlock(1) }; },
+      }),
     ],
     editorProps: {
       attributes: { class: 'rt-content', 'aria-label': 'Descripción de la tarea', spellcheck: 'true' },
@@ -308,6 +383,19 @@ export function createRichEditor({ element, toolbar, layer, content, onChange })
         FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form', 'input', 'img', 'video', 'audio', 'svg', 'math'],
         FORBID_ATTR: ['style', 'class', 'id'],
       }),
+      // Pegar o soltar imágenes (capturas, fotos del iPad…) las sube y las mete en el texto
+      handlePaste: (view, event) => {
+        const files = event.clipboardData?.files;
+        if (files?.length && [...files].some((f) => /^image\//.test(f.type))) { insertImages(files); return true; }
+        return false;
+      },
+      handleDrop: (view, event, slice, moved) => {
+        const files = event.dataTransfer?.files;
+        if (moved || !files?.length || ![...files].some((f) => /^image\//.test(f.type))) return false;
+        const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? null;
+        insertImages(files, pos);
+        return true;
+      },
       // Ctrl/Cmd + clic abre el enlace
       handleClick: (view, pos, event) => {
         const a = event.target.closest?.('a[href]');
@@ -334,6 +422,6 @@ export function createRichEditor({ element, toolbar, layer, content, onChange })
     focus: (pos = 'start') => { editor.view.dom.focus({ preventScroll: true }); editor.commands.focus(pos); },
     // Cierra el menú de la barra que esté abierto (colores, tamaño, enlace). Devuelve si había alguno.
     closeMenus: () => { const had = Boolean(openPop); closePop(); return had; },
-    destroy: () => { ro.disconnect(); closePop(); document.removeEventListener('pointerdown', onDocDown, true); editor.destroy(); },
+    destroy: () => { window.removeEventListener('rt-pick-image', onPickRequest); ro.disconnect(); closePop(); document.removeEventListener('pointerdown', onDocDown, true); editor.destroy(); },
   };
 }
