@@ -1,6 +1,7 @@
 import { supabase, BUCKET } from './supabase.js';
 import { el, ask, toast, avatar, ICONS } from './ui.js';
-import { STATUSES } from './utils.js';
+import { STATUSES, IMAGE_TYPES, FILE_TYPES, normalizeUrl, youtubeId, domainOf } from './utils.js';
+import { checkFile, uploadToBoard } from './cardForm.js';
 import { buildCard } from './card.js';
 import { imagePaths } from './richtext.js';
 import { openPanel, setPanelContext, refreshPanel, remoteCardUpdate, remoteCardDelete, syncOpenPanel } from './panel.js';
@@ -163,9 +164,128 @@ function endPosition(status) {
 }
 
 // Abrir el panel de una tarea nueva o existente
-export function openNew(status = 'todo', from = null) {
+export function openNew(status = 'todo', from = null, template = null) {
   showColumn(status);
-  openPanel({ status, returnFocus: from });
+  openPanel({ status, returnFocus: from, template });
+}
+
+// ---------------------------------------------------------------------
+// Menú del "+": qué quieres añadir
+// ---------------------------------------------------------------------
+
+const svgI = (p) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const ADD_KINDS = [
+  { kind: 'text', label: 'Texto', hint: 'Escribe con formato', icon: svgI('<path d="M5 6h14M5 12h14M5 18h9"/>') },
+  { kind: 'image', label: 'Imagen', hint: 'Una o varias fotos', icon: svgI('<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.8"/><path d="m21 16-5-5L6 20"/>') },
+  { kind: 'file', label: 'Archivo', hint: 'PDF, Word, PowerPoint…', icon: svgI('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>') },
+  { kind: 'link', label: 'Enlace', hint: 'Una página web', icon: svgI('<path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>') },
+  { kind: 'youtube', label: 'Vídeo', hint: 'De YouTube', icon: svgI('<rect x="2.5" y="5" width="19" height="14" rx="4"/><path d="m10 9 5 3-5 3z" fill="currentColor"/>') },
+  { kind: 'checklist', label: 'Lista de casillas', hint: 'Pasos para ir marcando', icon: svgI('<rect x="3.5" y="5" width="6" height="6" rx="1.5"/><path d="m4.8 8 1.3 1.3L8.4 6.8"/><rect x="3.5" y="14" width="6" height="6" rx="1.5"/><path d="M13 8h8M13 17h8"/>') },
+];
+
+function closeAddMenu() {
+  ui.addMenu.hidden = true;
+  ui.addBackdrop.hidden = true;
+}
+
+function openAddMenu(status, anchor) {
+  if (!ui.addMenu.hidden && ui.addMenu.dataset.status === status) { closeAddMenu(); return; }
+  ui.addMenu.dataset.status = status;
+  ui.addMenu.replaceChildren(
+    el('p', { class: 'add-menu-title', text: '¿Qué quieres añadir?' }),
+    el('div', { class: 'add-grid' }, ...ADD_KINDS.map((k) => el('button', {
+      class: `add-opt k-${k.kind}`, type: 'button', role: 'menuitem', 'data-kind': k.kind,
+      // Todo ocurre dentro del mismo toque (en el iPad, Safari solo abre el selector de archivos así)
+      onclick: () => { closeAddMenu(); addByKind(k.kind, status, anchor); },
+    }, el('span', { class: 'add-ico', html: k.icon }), el('span', { class: 'add-txt' }, el('strong', { text: k.label }), el('small', { text: k.hint }))))));
+  const sheet = innerWidth <= 600;
+  ui.addMenu.classList.toggle('sheet', sheet);
+  ui.addMenu.hidden = false;
+  ui.addBackdrop.hidden = !sheet;
+  if (!sheet) {
+    const r = anchor.getBoundingClientRect();
+    const w = ui.addMenu.offsetWidth, h = ui.addMenu.offsetHeight;
+    const left = Math.max(8, Math.min(r.left, innerWidth - w - 8));
+    const below = r.bottom + 8 + h < innerHeight;
+    ui.addMenu.style.left = `${left + scrollX}px`;
+    ui.addMenu.style.top = `${(below ? r.bottom + 8 : Math.max(8, r.top - h - 8)) + scrollY}px`;
+  } else {
+    ui.addMenu.style.left = ''; ui.addMenu.style.top = '';
+  }
+  ui.addMenu.querySelector('.add-opt').focus({ preventScroll: true });
+}
+
+const titleFromFile = (name) => name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) || 'Sin título';
+
+async function createCard(status, fields) {
+  const { data, error } = await supabase.from('cards')
+    .insert({ board_id: S.board.id, status, position: endPosition(status), ...fields })
+    .select().single();
+  if (error) throw new Error(error.message);
+  upsertLocal(data);
+  return data;
+}
+
+function addByKind(kind, status, anchor) {
+  showColumn(status);
+  if (kind === 'text') return openNew(status, anchor);
+  if (kind === 'checklist') {
+    return openNew(status, anchor, { type: 'doc', content: [{ type: 'taskList', content: [{ type: 'taskItem', attrs: { checked: false }, content: [{ type: 'paragraph' }] }] }] });
+  }
+  if (kind === 'image' || kind === 'file') {
+    const types = kind === 'image' ? IMAGE_TYPES : FILE_TYPES;
+    const input = el('input', { type: 'file', multiple: true, hidden: true, accept: Object.keys(types).map((e) => `.${e}`).join(',') });
+    input.onchange = async () => {
+      const files = [...input.files];
+      input.remove();
+      let n = 0;
+      for (const file of files) {
+        const problem = checkFile(file, kind);
+        if (problem) { toast(`${file.name}: ${problem}`); continue; }
+        if (kind === 'image' && window.createImageBitmap) {
+          try { (await createImageBitmap(file)).close?.(); } catch { toast(`"${file.name}" no es una imagen válida`); continue; }
+        }
+        n++;
+        toast(files.length > 1 ? `Subiendo ${n} de ${files.length}…` : 'Subiendo…');
+        try {
+          const up = await uploadToBoard(S.board.id, file);
+          await createCard(status, { kind, title: titleFromFile(file.name), ...up });
+        } catch (e) {
+          toast(`No se pudo subir "${file.name}": ${e.message}`);
+          n--;
+        }
+      }
+      if (n) toast(n === 1 ? (kind === 'image' ? 'Imagen añadida' : 'Archivo añadido') : `${n} ${kind === 'image' ? 'imágenes añadidas' : 'archivos añadidos'}`);
+    };
+    document.body.append(input);
+    input.click();
+    return;
+  }
+  // Enlace o vídeo
+  (async () => {
+    const isVideo = kind === 'youtube';
+    const value = await ask({
+      title: isVideo ? 'Añadir vídeo de YouTube' : 'Añadir enlace',
+      text: isVideo ? 'Pega el enlace del vídeo.' : 'Pega la dirección de la página.',
+      ok: 'Añadir',
+      input: { type: 'text', inputmode: 'url', autocapitalize: 'off', placeholder: isVideo ? 'https://www.youtube.com/watch?v=…' : 'https://…' },
+    });
+    if (!value) return;
+    try {
+      if (isVideo) {
+        const id = youtubeId(value);
+        if (!id) { toast('No es un enlace de YouTube válido'); return; }
+        await createCard(status, { kind: 'youtube', url: `https://www.youtube.com/watch?v=${id}`, title: 'Vídeo de YouTube' });
+      } else {
+        const url = normalizeUrl(value);
+        if (!url) { toast('El enlace no es válido'); return; }
+        await createCard(status, { kind: 'link', url, title: domainOf(url) });
+      }
+      toast(isVideo ? 'Vídeo añadido' : 'Enlace añadido');
+    } catch (e) {
+      toast(`No se pudo añadir: ${e.message}`);
+    }
+  })();
 }
 
 function openCard(card, from = null) {
@@ -174,8 +294,8 @@ function openCard(card, from = null) {
 }
 
 function addRow(status) {
-  return el('button', { class: 'add-row', type: 'button', onclick: (e) => openNew(status, e.currentTarget) },
-    el('span', { html: ICONS.plus }), 'Añadir tarea');
+  return el('button', { class: 'add-row', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => openAddMenu(status, e.currentTarget) },
+    el('span', { html: ICONS.plus }), 'Añadir');
 }
 
 async function deleteCard(card) {
@@ -317,7 +437,7 @@ function buildLayout(app) {
       el('div', { class: 'top-actions' },
         el('button', { class: 'btn invite-btn', type: 'button', onclick: openInvite, title: 'Invitar a gente' },
           el('span', { html: ICONS.userPlus }), el('span', { class: 'add-label', text: 'Invitar' })),
-        el('button', { class: 'btn primary add-btn', type: 'button', onclick: (e) => openNew('todo', e.currentTarget) },
+        el('button', { class: 'btn primary add-btn', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => openAddMenu('todo', e.currentTarget) },
           el('span', { html: ICONS.plus }), el('span', { class: 'add-label', text: 'Nueva tarea' })),
         el('div', { class: 'me-wrap' }, ui.menuBtn, ui.menu))),
     el('div', { class: 'topbar-row filters' },
@@ -341,7 +461,7 @@ function buildLayout(app) {
       el('div', { class: 'column-head' },
         el('h2', {}, el('span', { class: 'state-icon', html: ICONS[status] }), label),
         ui.counts[status],
-        el('button', { class: 'icon-btn col-add', type: 'button', title: `Añadir en "${label}"`, 'aria-label': `Añadir en ${label}`, html: ICONS.plus, onclick: (e) => openNew(status, e.currentTarget) })),
+        el('button', { class: 'icon-btn col-add', type: 'button', title: `Añadir en "${label}"`, 'aria-label': `Añadir en ${label}`, html: ICONS.plus, 'aria-haspopup': 'menu', onclick: (e) => openAddMenu(status, e.currentTarget) })),
       ui.lists[status],
       ui.adds[status]);
     ui.board.append(ui.columns[status]);
@@ -361,9 +481,25 @@ function buildLayout(app) {
 
   // Botón flotante "+" en pantallas pequeñas (crea en la columna que se está viendo)
   ui.fab = el('button', { class: 'fab', type: 'button', title: 'Nueva tarea', 'aria-label': 'Nueva tarea', html: ICONS.plus,
-    onclick: (e) => openNew(S.activeTab || 'todo', e.currentTarget) });
+    'aria-haspopup': 'menu', onclick: (e) => openAddMenu(S.activeTab || 'todo', e.currentTarget) });
 
-  app.replaceChildren(header, ui.tabs, ui.board, ui.popover, ui.fab);
+  ui.addMenu = el('div', { class: 'add-menu', role: 'menu', 'aria-label': 'Añadir', hidden: true });
+  ui.addBackdrop = el('div', { class: 'add-backdrop', hidden: true, onclick: closeAddMenu });
+  ui.addMenu.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closeAddMenu(); }
+    if (['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      const opts = [...ui.addMenu.querySelectorAll('.add-opt')];
+      const i = opts.indexOf(document.activeElement);
+      const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: 2, ArrowUp: -2 }[e.key];
+      opts[(i + step + opts.length) % opts.length]?.focus();
+      e.preventDefault();
+    }
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (!ui.addMenu.hidden && !ui.addMenu.contains(e.target) && !e.target.closest('[aria-haspopup=menu]') && e.target !== ui.addBackdrop) closeAddMenu();
+  });
+
+  app.replaceChildren(header, ui.tabs, ui.board, ui.popover, ui.fab, ui.addBackdrop, ui.addMenu);
   addEventListener('scroll', () => header.classList.toggle('scrolled', scrollY > 4), { passive: true });
   setActiveTab('todo');
 }

@@ -27,14 +27,14 @@ export const isPanelOpen = () => Boolean(P);
 // ---------------------------------------------------------------------
 
 /** Abre una tarea existente (card) o una nueva en `status`. */
-export function openPanel({ card = null, status = 'todo', returnFocus = null } = {}) {
+export function openPanel({ card = null, status = 'todo', returnFocus = null, template = null } = {}) {
   if (P) { switchTo(card, status); return; }
   const dlg = document.getElementById('task-panel');
   P = {
     dlg, returnFocus,
     id: null, version: 0, status, color: null, due: null, title: '',
     dirty: false, saving: false, pendingSave: false, seq: 0, timer: null,
-    conflict: null, deleted: false, editor: null, ready: false,
+    conflict: null, deleted: false, editor: null, ready: false, template,
   };
   build();
   load(card, status);
@@ -174,15 +174,14 @@ async function mountEditor() {
       element: P.editorEl,
       toolbar: P.toolbar,
       layer: P.box,
-      content: contentOf(card),
+      content: card ? contentOf(card) : (P.template || contentOf(null)),
       onChange: editorChanged,
       uploadImage: uploadInlineImage,
     });
-    // Lo que el editor ajusta al cargar (p. ej. un párrafo final) no cuenta como cambio
-    P.settling = true;
+    // Punto de partida para saber si hay cambios (sin contar los ajustes del propio editor)
+    P.baseline = norm(P.editor.getJSON());
     if (P.focusEditorWhenReady) { P.focusEditorWhenReady = false; P.editor.focus('start'); }
     else if (card && document.activeElement !== P.titleEl) P.editor.focus('end');
-    setTimeout(() => { if (P === panel) { P.baseline = JSON.stringify(P.editor.getJSON()); P.settling = false; } }, 60);
     P.ready = true;
   } catch (e) {
     P.toolbar.replaceChildren(el('span', { class: 'error', text: 'No se pudo cargar el editor. Recarga la página.' }));
@@ -300,17 +299,16 @@ async function changeColumn(status) {
   await ctx.move(P.id, status);
 }
 
-// Para asignar o adjuntar hace falta que la tarea exista
+// Para asignar o adjuntar hace falta que la tarea exista: si aún no está guardada, se guarda ya
+// (si no tiene título, como "Sin título"; se puede poner después)
 async function ensureSaved() {
   if (P.id) return true;
-  if (!P.titleEl.value.trim()) {
-    P.titleEl.focus();
-    toast('Escribe primero un título');
-    return false;
-  }
   P.dirty = true;
+  P.forceCreate = true;
   await flush();
-  return Boolean(P?.id);
+  if (P) P.forceCreate = false;
+  if (!P?.id) { toast('No se pudo guardar la tarea. Comprueba la conexión.'); return false; }
+  return true;
 }
 
 // ---------------------------------------------------------------------
@@ -323,22 +321,25 @@ function setStatus(text, kind = '') {
   P.statusEl.dataset.kind = kind;
 }
 
+// El editor añade por su cuenta párrafos vacíos al final: no cuentan como cambio
+function norm(doc) {
+  const c = [...(doc?.content || [])];
+  while (c.length && c[c.length - 1].type === 'paragraph' && !c[c.length - 1].content) c.pop();
+  return JSON.stringify(c);
+}
+
 // Solo cuenta como cambio si el texto es distinto del último guardado/cargado
 function editorChanged() {
-  if (!P?.editor) return;
-  if (P.settling) { P.baseline = JSON.stringify(P.editor.getJSON()); return; }
+  if (!P?.editor || P.baseline == null) return;
   if (P.dirty) { changed(); return; } // ya hay cambios: no hace falta comparar el documento entero
-  if (JSON.stringify(P.editor.getJSON()) === P.baseline) return;
+  if (norm(P.editor.getJSON()) === P.baseline) return;
   changed();
 }
 
 function setEditorContent(doc) {
   if (!P.editor) return;
-  const panel = P;
-  P.settling = true;
   P.editor.setContent(doc);
-  P.baseline = JSON.stringify(P.editor.getJSON());
-  setTimeout(() => { if (P === panel && P.editor) { P.baseline = JSON.stringify(P.editor.getJSON()); P.settling = false; } }, 60);
+  P.baseline = norm(P.editor.getJSON());
 }
 
 function changed(now = false) {
@@ -373,7 +374,7 @@ async function save({ force = false } = {}) {
   const { title, doc, text } = snapshot();
 
   // Nueva y vacía: no se crea nada
-  if (!P.id && !title && isEmptyDoc(doc)) { P.dirty = false; setStatus('Nueva tarea'); return; }
+  if (!P.id && !title && isEmptyDoc(doc) && !P.forceCreate) { P.dirty = false; setStatus('Nueva tarea'); return; }
 
   const fields = {
     title: title || 'Sin título',
@@ -421,7 +422,7 @@ async function save({ force = false } = {}) {
   P.version = data.version;
   ctx.upsertLocal(data);
   if (isNew) { P.deleteBtn.hidden = false; renderMeta(); }
-  if (P.seq === seq) { P.dirty = false; P.baseline = JSON.stringify(doc); setStatus('Guardado', 'saved'); }
+  if (P.seq === seq) { P.dirty = false; P.baseline = norm(doc); setStatus('Guardado', 'saved'); }
   if (P.pendingSave || P.dirty) { P.pendingSave = false; clearTimeout(P.timer); P.timer = setTimeout(save, SAVE_DELAY); }
 }
 

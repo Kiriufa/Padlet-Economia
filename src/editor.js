@@ -137,6 +137,10 @@ export function createRichEditor({ element, toolbar, layer, content, onChange, u
     const images = [...files].filter((f) => /^image\//.test(f.type));
     if (!images.length || !uploadImage) return false;
     for (const file of images) {
+      // Comprobar que de verdad es una imagen que se puede abrir (no un archivo dañado)
+      if (window.createImageBitmap) {
+        try { (await createImageBitmap(file)).close?.(); } catch { toast(`"${file.name}" no es una imagen válida`); continue; }
+      }
       toast('Subiendo imagen…');
       try {
         const src = await uploadImage(file);

@@ -40,9 +40,21 @@ let toastTimer;
 export function toast(message) {
   const t = document.getElementById('toast');
   t.textContent = message;
+  // Con un panel o una ventana abierta, el aviso tiene que ir por encima (capa superior)
+  if (t.showPopover) {
+    if (!t.hasAttribute('popover')) t.setAttribute('popover', 'manual');
+    try { t.hidePopover(); } catch {}
+    try { t.showPopover(); } catch {}
+  } else {
+    const host = [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+    if (t.parentElement !== host) host.append(t);
+  }
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+  toastTimer = setTimeout(() => {
+    t.classList.remove('show');
+    setTimeout(() => { if (!t.classList.contains('show')) try { t.hidePopover?.(); } catch {} }, 250);
+  }, 3500);
 }
 
 // Diálogo de confirmación/pregunta. Devuelve true/false, o el texto si lleva input.

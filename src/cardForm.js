@@ -12,7 +12,7 @@ const KINDS = [
 
 const accept = (types) => Object.keys(types).map((e) => `.${e}`).join(',');
 
-function checkFile(file, kind) {
+export function checkFile(file, kind) {
   const types = kind === 'image' ? IMAGE_TYPES : FILE_TYPES;
   const ext = extOf(file.name);
   if (!types[ext]) {
@@ -22,6 +22,17 @@ function checkFile(file, kind) {
   }
   if (file.size > MAX_FILE) return `El archivo pesa ${formatSize(file.size)}. El máximo es ${MAX_FILE_MB} MB.`;
   return '';
+}
+
+// Sube un archivo al almacenamiento del tablero
+export async function uploadToBoard(boardId, file) {
+  const safe = file.name.normalize('NFD').replace(/[^\w.-]+/g, '_').slice(-80);
+  const path = `${boardId}/${crypto.randomUUID()}-${safe}`;
+  const { error } = await supabase.storage.from(BUCKET).upload(path, file, { contentType: FILE_TYPES[extOf(file.name)], upsert: false });
+  if (error) {
+    throw new Error(/exceeded|too large|413/i.test(error.message) ? `El archivo supera el máximo permitido (${MAX_FILE_MB} MB).` : error.message);
+  }
+  return { file_path: path, file_name: file.name, file_size: file.size };
 }
 
 /**
