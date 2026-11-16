@@ -2,7 +2,7 @@ import { supabase, BUCKET } from './supabase.js';
 import { el, ask, toast, avatar, ICONS } from './ui.js';
 import { STATUSES } from './utils.js';
 import { buildCard } from './card.js';
-import { openPanel, setPanelContext, refreshPanel, remoteCardUpdate, remoteCardDelete } from './panel.js';
+import { openPanel, setPanelContext, refreshPanel, remoteCardUpdate, remoteCardDelete, syncOpenPanel } from './panel.js';
 import { initDnd } from './dnd.js';
 
 // Estado del tablero
@@ -79,6 +79,7 @@ async function load() {
   for (const a of assignees.data) addAssignee(a.card_id, a.user_id);
   S.members = new Map(members.data.map((m) => [m.user_id, m]));
   render();
+  syncOpenPanel((cid) => S.cards.get(cid));
 }
 
 // Si aparece alguien que no conocemos (nos perdimos su llegada), recargamos la lista de personas
@@ -476,7 +477,9 @@ function render() {
       const people = ids.map((u) => [u, S.members.get(u)]);
       if (people.some(([, m]) => !m)) refreshMembers();
       const editable = true; // cualquier miembro puede editar y borrar
-      const key = JSON.stringify([card, people, editable]);
+      // El texto puede ser largo: la versión (y updated_at) ya cambian cuando cambia
+      const { content, description, ...rest } = card;
+      const key = JSON.stringify([rest, content ? 1 : 0, description ? description.length : 0, people, editable]);
       let entry = cache.get(card.id);
       if (!entry || entry.key !== key) {
         // Encargados recién añadidos (para animar su avatar)

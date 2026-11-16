@@ -50,7 +50,8 @@ export function cleanDoc(doc) {
           if (textColors.has(color)) marks.push({ type: 'textStyle', attrs: { color } });
         } else if (m.type === 'highlight') {
           const color = m.attrs?.color;
-          if (highlightColors.has(color)) marks.push({ type: 'highlight', attrs: { color } });
+          // Sin color (o uno desconocido) → amarillo de la paleta, en vez de perder el resaltado
+          marks.push({ type: 'highlight', attrs: { color: highlightColors.has(color) ? color : HIGHLIGHTS[0][1] } });
         } else {
           marks.push({ type: m.type });
         }

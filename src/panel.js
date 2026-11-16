@@ -125,8 +125,8 @@ function build() {
   // Esc cierra el panel. Lo gestionamos nosotros (el navegador no siempre lanza "cancel"),
   // salvo si Esc ya se ha usado para cerrar el menú "/" o el cuadro del enlace.
   // Se mira antes que el editor (fase de captura): ProseMirror siempre "consume" Esc.
-  dlg.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || e.isComposing) return;
+  if (!dlg.dataset.escBound) dlg.dataset.escBound = '1', dlg.addEventListener('keydown', (e) => {
+    if (!P || e.key !== 'Escape' || e.isComposing) return;
     if (document.getElementById('ask-dialog').open || document.getElementById('card-dialog').open) return;
     if (P?.box.querySelector('.slash-menu')) return; // Esc cierra primero el menú "/"
     if (P?.editor?.closeMenus()) { e.preventDefault(); e.stopPropagation(); P.editor.focus(null); return; }
@@ -134,7 +134,9 @@ function build() {
     e.stopPropagation();
     closePanel();
   }, true);
-  dlg.onclick = (e) => { if (e.target === dlg) closePanel(); }; // clic fuera del panel
+  // Clic fuera del panel: solo si el clic empezó también fuera (no al soltar una selección de texto)
+  dlg.onpointerdown = (e) => { P.downOutside = e.target === dlg; };
+  dlg.onclick = (e) => { if (e.target === dlg && P?.downOutside) closePanel(); };
 }
 
 function contentOf(card) {
@@ -192,8 +194,9 @@ async function mountEditor() {
 
 export function refreshPanel() {
   if (!P) return;
-  // Si estás usando algo de esta zona (fecha, asignar…), se redibuja cuando termines
-  if (P.meta.contains(document.activeElement) && document.activeElement !== document.body) {
+  // Si estás escribiendo en un campo de esta zona (la fecha), se redibuja cuando termines
+  const active = document.activeElement;
+  if (P.meta.contains(active) && /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName)) {
     if (!P.metaPending) {
       P.metaPending = true;
       P.meta.addEventListener('focusout', () => setTimeout(() => { if (P && P.metaPending && !P.meta.contains(document.activeElement)) { P.metaPending = false; renderMeta(); } }, 0), { once: true });
@@ -309,16 +312,18 @@ function setStatus(text, kind = '') {
 function editorChanged() {
   if (!P?.editor) return;
   if (P.settling) { P.baseline = JSON.stringify(P.editor.getJSON()); return; }
-  if (JSON.stringify(P.editor.getJSON()) === P.baseline && !P.dirty) return;
+  if (P.dirty) { changed(); return; } // ya hay cambios: no hace falta comparar el documento entero
+  if (JSON.stringify(P.editor.getJSON()) === P.baseline) return;
   changed();
 }
 
 function setEditorContent(doc) {
   if (!P.editor) return;
+  const panel = P;
   P.settling = true;
   P.editor.setContent(doc);
   P.baseline = JSON.stringify(P.editor.getJSON());
-  setTimeout(() => { if (P) { P.baseline = JSON.stringify(P.editor.getJSON()); P.settling = false; } }, 60);
+  setTimeout(() => { if (P === panel && P.editor) { P.baseline = JSON.stringify(P.editor.getJSON()); P.settling = false; } }, 60);
 }
 
 function changed(now = false) {
@@ -430,7 +435,14 @@ export function remoteCardUpdate(card) {
 }
 
 export function remoteCardDelete(id) {
-  if (P && id === P.id && !P.saving) showDeleted();
+  if (P && id === P.id && !P.saving && !P.removing) showDeleted();
+}
+
+/** Tras recargar el tablero (volver a la pestaña, reconexión) se sincroniza la tarea abierta. */
+export function syncOpenPanel(getCard) {
+  if (!P?.id || P.saving || P.removing) return;
+  const card = getCard(P.id);
+  if (card) remoteCardUpdate(card); else showDeleted();
 }
 
 function applyRemote(card) {
@@ -523,8 +535,11 @@ async function removeTask() {
   if (!ok || !P) return;
   clearTimeout(P.timer);
   const card = ctx.getCard(P.id);
+  P.removing = true;
   const done = await ctx.remove(card);
-  if (done && P) { P.dirty = false; P.id = null; await closePanel(); }
+  if (!P) return;
+  if (done) { P.dirty = false; P.deleted = false; P.conflict = null; P.id = null; await closePanel(); }
+  else P.removing = false;
 }
 
 // ---------------------------------------------------------------------

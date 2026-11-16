@@ -205,6 +205,7 @@ export function createRichEditor({ element, toolbar, layer, content, onChange })
       } else { input.setCustomValidity('Enlace no válido'); input.reportValidity(); return; }
       closePop();
     };
+    input.addEventListener('input', () => input.setCustomValidity(''));
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } if (e.key === 'Escape') { e.preventDefault(); closePop(); editor.commands.focus(); } });
     popover(anchor,
       el('p', { class: 'pop-label', text: 'Enlace' }),
@@ -272,13 +273,17 @@ export function createRichEditor({ element, toolbar, layer, content, onChange })
           linkOnPaste: true,
           defaultProtocol: 'https',
           protocols: ['http', 'https', 'mailto'],
-          isAllowedUri: (url) => SAFE_URL.test(url),
+          // Acepta también "www.ine.es" (se le pone https:// al crear el enlace)
+          isAllowedUri: (url, { defaultValidate }) => SAFE_URL.test(url) || (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(url) && defaultValidate(`https://${url}`)),
           HTMLAttributes: { rel: 'noopener noreferrer nofollow', target: '_blank' },
         },
       }),
       TextStyle,
       Color,
-      Highlight.configure({ multicolor: true }),
+      // Ctrl/Cmd+Mayús+H resalta en el amarillo de la paleta
+      Highlight.extend({
+        addKeyboardShortcuts() { return { 'Mod-Shift-h': () => this.editor.commands.toggleHighlight({ color: HIGHLIGHTS[0][1] }) }; },
+      }).configure({ multicolor: true }),
       TaskList,
       TaskItem.configure({ nested: true }),
       Details.configure({ persist: false, HTMLAttributes: { class: 'rt-details' } }),

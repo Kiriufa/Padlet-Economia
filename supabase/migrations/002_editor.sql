@@ -35,6 +35,8 @@ where c.content is null and coalesce(c.description, '') <> '';
 create or replace function public.cards_bump_version()
 returns trigger language plpgsql set search_path = '' as $$
 begin
+  -- El autor de la tarjeta no se puede cambiar
+  new.created_by := old.created_by;
   if new.title is distinct from old.title
      or new.content is distinct from old.content
      or new.description is distinct from old.description
@@ -47,7 +49,9 @@ begin
     new.updated_by := auth.uid();
     new.updated_at := now();
   else
+    -- Sin cambios de contenido: ni la versión ni "quién lo cambió" se pueden tocar a mano
     new.version := old.version;
+    new.updated_by := old.updated_by;
   end if;
   return new;
 end $$;
