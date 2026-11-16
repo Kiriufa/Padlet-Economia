@@ -136,6 +136,24 @@ export function createRichEditor({ element, toolbar, layer, content, onChange, u
   const insertImages = async (files, pos = null) => {
     const images = [...files].filter((f) => /^image\//.test(f.type));
     if (!images.length || !uploadImage) return false;
+    // Con el cursor en el título de una sección desplegable, la imagen va dentro de la sección (y se abre)
+    if (pos == null) {
+      const $from = editor.state.selection.$from;
+      for (let d = $from.depth; d > 0; d--) {
+        if ($from.node(d).type.name !== 'detailsSummary') continue;
+        const detailsPos = $from.before(d - 1);
+        $from.node(d - 1).forEach((child, off) => {
+          if (child.type.name !== 'detailsContent') return;
+          const start = detailsPos + 1 + off + 1;
+          // Sección vacía (solo un párrafo vacío): la imagen ocupa su lugar
+          const only = child.childCount === 1 && child.firstChild.type.name === 'paragraph' && !child.firstChild.content.size;
+          pos = only ? { from: start, to: start + child.firstChild.nodeSize } : start + child.content.size;
+        });
+        const dom = editor.view.nodeDOM(detailsPos);
+        if (dom && !dom.classList.contains('is-open')) dom.querySelector(':scope > button')?.click();
+        break;
+      }
+    }
     for (const file of images) {
       // Comprobar que de verdad es una imagen que se puede abrir (no un archivo dañado)
       if (window.createImageBitmap) {
