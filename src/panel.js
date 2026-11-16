@@ -233,17 +233,17 @@ function renderMeta() {
       ? ids.map((u) => el('span', { class: 'tp-person' }, avatar(ctx.member(u), u, 'sm'), el('span', { text: u === me ? 'Tú' : (ctx.member(u)?.name || '?') })))
       : el('span', { class: 'muted small', text: 'Sin encargado' }));
   const claim = el('button', { class: `btn small ${mine ? 'ghost' : 'claim'}`, type: 'button', text: mine ? 'Soltar' : 'Me lo quedo' });
-  claim.onclick = async () => {
+  claim.onclick = () => busy(claim, mine ? 'Soltando…' : 'Guardando…', async () => {
     if (!(await ensureSaved())) return;
     if (mine) await ctx.unassign(P.id, me); else await ctx.assign(P.id, me);
-  };
+  });
   const assignBtn = el('button', { class: 'btn small', type: 'button', title: 'Asignar a otra persona' }, el('span', { html: ICONS.userPlus }), 'Asignar');
   const list = el('div', { class: 'tp-assign', hidden: !P.assignOpen });
-  assignBtn.onclick = async () => {
+  assignBtn.onclick = () => busy(assignBtn, 'Abriendo…', async () => {
     if (!(await ensureSaved())) return;
     P.assignOpen = !P.assignOpen;
     renderMeta();
-  };
+  });
   if (P.assignOpen && P.id) {
     list.replaceChildren(...ctx.members().map(([uid, m]) => {
       const on = ids.includes(uid);
@@ -274,7 +274,9 @@ function renderMeta() {
   const attachBtn = el('button', { class: 'btn small tp-attach', type: 'button', title: 'Imagen, archivo, enlace o vídeo' },
     el('span', { html: ICONS.link }), attach === 'Ninguno' ? 'Añadir' : attach);
   attachBtn.onclick = async () => {
-    if (!(await ensureSaved())) return;
+    let ok = false;
+    await busy(attachBtn, 'Abriendo…', async () => { ok = await ensureSaved(); });
+    if (!ok || !P) return;
     const saved = await openAttachmentForm({ board: ctx.board(), card: ctx.getCard(P.id) });
     if (saved && P) { P.version = saved.version; ctx.upsertLocal(saved); renderMeta(); }
   };
@@ -298,6 +300,18 @@ async function changeColumn(status) {
   P.status = status;
   if (!P.id) return; // se usará al crearla
   await ctx.move(P.id, status);
+}
+
+// Respuesta inmediata al tocar un botón que tiene que esperar a la red
+async function busy(button, text, fn) {
+  if (button.disabled) return;
+  const old = [...button.childNodes];
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), text);
+  try { await fn(); } finally {
+    if (button.isConnected) { button.disabled = false; button.removeAttribute('aria-busy'); button.replaceChildren(...old); }
+  }
 }
 
 // Para asignar o adjuntar hace falta que la tarea exista: si aún no está guardada, se guarda ya

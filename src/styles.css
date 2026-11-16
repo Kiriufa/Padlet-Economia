@@ -667,6 +667,10 @@ button, a, .card, select, input { -webkit-tap-highlight-color: transparent; }
 }
 .tp-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .tp-swatches { display: flex; align-items: center; gap: 4px; }
+/* Botón esperando a la red */
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .7s linear infinite; display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn[aria-busy="true"] { opacity: .8; cursor: progress; }
 /* Zona de toque de 44 px; el círculo de color se ve más pequeño dentro */
 .tp-swatches { gap: 0; }
 .tp-swatches .swatch { width: 44px; height: 44px; margin: 0; border: 7px solid var(--surface); background-clip: padding-box; outline-offset: -5px; }
