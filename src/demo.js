@@ -5,7 +5,7 @@
 
 import { FILE_TYPES, MAX_FILE, extOf } from './utils.js';
 
-const KEY = 'tablero-demo-v2';
+const KEY = 'tablero-demo-v3';
 const PEOPLE = ['Marta Gil', 'Jorge Sanz', 'Lucía Moreno', 'Pablo Ortega', 'Nerea Vidal', 'Hugo Castro'];
 export const DEMO_PIN = '1234';
 
@@ -82,6 +82,11 @@ function seed() {
   return {
     boards: [{ id: B, code: 'DEMO24', name: 'Trabajo de Economía', pin: DEMO_PIN, created_by: p.ana }],
     members, cards, card_assignees, files, next: 0,
+    card_comments: [
+      { id: 'k1', card_id: 'c6', board_id: B, user_id: p.luis, body: 'Te paso luego los datos del INE para la intro 👍', created_at: new Date(Date.now() - 3 * 3600e3).toISOString() },
+      { id: 'k2', card_id: 'c6', board_id: B, user_id: p.ana, body: 'Genial, gracias. La tengo casi lista para el jueves.', created_at: new Date(Date.now() - 2 * 3600e3).toISOString() },
+      { id: 'k3', card_id: 'c5', board_id: B, user_id: p.sofia, body: '¿Añadimos 2026 cuando salgan los datos?', created_at: new Date(Date.now() - 26 * 3600e3).toISOString() },
+    ],
   };
 }
 
@@ -196,6 +201,16 @@ export function createDemoClient() {
         emit('card_assignees', 'INSERT', r);
         return this.out([r]);
       }
+      if (this.table === 'card_comments') {
+        const body = String(r.body || '').trim();
+        if (!body || body.length > 2000) return err('El comentario debe tener entre 1 y 2000 caracteres');
+        if (r.user_id !== user.id) return err('No permitido');
+        if (!db.cards.some((c) => c.id === r.card_id && c.board_id === r.board_id)) return err('Tarea no encontrada');
+        const row = { id: uid(), created_at: now(), ...r, body };
+        (db.card_comments ||= []).push(row);
+        emit('card_comments', 'INSERT', row);
+        return this.out([row]);
+      }
       return err('No permitido');
     }
 
@@ -225,6 +240,10 @@ export function createDemoClient() {
         rows = rows.filter((a) => isMember(a.board_id));
         db.card_assignees = db.card_assignees.filter((a) => !rows.includes(a));
         for (const a of rows) emit('card_assignees', 'DELETE', null, { card_id: a.card_id, user_id: a.user_id });
+      } else if (this.table === 'card_comments') {
+        rows = rows.filter((c) => c.user_id === user.id && isMember(c.board_id));
+        db.card_comments = (db.card_comments || []).filter((c) => !rows.includes(c));
+        for (const c of rows) emit('card_comments', 'DELETE', null, { id: c.id });
       } else {
         rows = [];
       }

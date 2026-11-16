@@ -23,7 +23,7 @@ En la web publicada también puedes verla añadiendo `?demo` a la dirección.
 1. Entra en [supabase.com](https://supabase.com) → **New project**. Elige un nombre y una contraseña, y espera a que se cree.
 2. Ve a **SQL Editor** → **New query**, pega todo el contenido de [`supabase/schema.sql`](supabase/schema.sql) y pulsa **Run**.
    Así se crean las tablas, la seguridad (RLS), las funciones, el tiempo real y el bucket `uploads`. Se puede ejecutar más de una vez sin problema.
-   **¿Ya tenías el proyecto creado de antes?** Pega también las migraciones de [`supabase/migrations/`](supabase/migrations/), en orden: `002_editor.sql` (texto con formato) y `003_restore.sql` (deshacer un borrado).
+   **¿Ya tenías el proyecto creado de antes?** Pega también las migraciones de [`supabase/migrations/`](supabase/migrations/), en orden: `002_editor.sql` (texto con formato), `003_restore.sql` (deshacer un borrado) y `004_comments.sql` (comentarios).
 3. Ve a **Project Settings → API** y copia dos datos:
    - **Project URL**
    - **anon public key**. En los proyectos nuevos se llama *Publishable key*; también sirve.
@@ -86,6 +86,8 @@ Abre http://localhost:5173. El archivo `.env` no se sube a Git: está en `.gitig
   Fotos del Mac, iPhone o iPad: se aceptan en HEIC (se convierten a JPG en Safari) y las muy grandes se reducen solas antes de subirlas.
   Con "Texto" se abre la tarea con el cursor en el título; **Enter** salta al texto. Se guarda sola ("Guardado" arriba). "+ Otra tarea" deja el panel listo para la siguiente.
 - **Ver una tarea:** al tocar una tarjeta se abre en grande para leerla: texto con formato, imágenes, vídeo, PDF (se lee ahí mismo) o enlace. Con las flechas (o ← →) pasas a la anterior o la siguiente de la columna, y "Desplegar todo" abre todas las secciones.
+- **Comentarios:** en la vista grande, el botón **Comentarios** abre la conversación de esa tarea: quién ha escrito qué y cuándo, y una caja para escribir (Enter envía, Mayús+Enter salta de línea). Cada uno puede borrar los suyos. En el tablero, la tarjeta muestra "💬 3" y al tocarlo se abren directamente.
+- **Varias fotos a la vez:** con "Imagen" puedes elegir varias y se publican juntas en **una sola tarjeta**, en collage como en WhatsApp (2, 3, 4 o "+N"). Al tocar una foto se abre el visor a pantalla completa: flechas, deslizar el dedo y miniaturas. Lo mismo pasa con varias imágenes seguidas dentro del texto.
 - **Editar:** botón **Editar** de la vista grande (o tecla E), o el lápiz de la tarjeta.
 - **Deshacer y rehacer:** las flechas de arriba (o Ctrl/Cmd+Z y Ctrl/Cmd+Mayús+Z) deshacen y rehacen lo último que has hecho: borrar, crear, mover o editar una tarea. Al borrar sale también un aviso con "Deshacer". La tarea vuelve con su texto, archivos y encargados, también para los demás. El historial es de cada persona y se guarda en su navegador, aunque recargue la página.
 - **Escribir con formato:** dentro del editor. La barra de arriba tiene: deshacer/rehacer, Texto normal / Título / Subtítulo (y A+ / A−), negrita, cursiva, subrayado, tachado, 8 colores de texto y 8 de resaltado, viñetas, lista numerada, casillas, enlace y secciones desplegables. Escribe **/** para el menú rápido de bloques.
@@ -120,6 +122,7 @@ src/
   card.js       cómo se pinta cada tarjeta (resumen, imagen, archivo, enlace, YouTube)
   preview.js    vista previa grande (solo lectura) al tocar una tarjeta
   history.js    historial de deshacer / rehacer
+  gallery.js    collage de fotos y visor a pantalla completa
   panel.js      panel de la tarea: título, editor, encargados, etiqueta, fecha, autoguardado y avisos
   editor.js     editor de texto con formato (Tiptap) y su barra; se carga solo al abrir una tarea
   richtext.js   limpieza del contenido, resumen y texto plano (sin depender del editor)
@@ -130,5 +133,5 @@ src/
   demo.js       modo demo: imita Supabase en el navegador
   styles.css
 supabase/schema.sql   todo el SQL (instalación nueva)
-supabase/migrations/  cambios para proyectos que ya existían (002: texto con formato, 003: deshacer borrados)
+supabase/migrations/  cambios para proyectos que ya existían (002: texto con formato, 003: deshacer borrados, 004: comentarios)
 ```

@@ -15,6 +15,7 @@ const S = {
   me: null,
   cards: new Map(), // id -> card
   assignees: new Map(), // card_id -> Set(user_id)
+  comments: new Map(), // card_id -> [comentario] (ordenados por fecha)
   members: new Map(), // user_id -> { name, avatar_url, is_admin }
   filter: 'all', // 'all' | 'mine' | user_id
   search: '',
@@ -72,10 +73,11 @@ export function openBoard(app, board, user, acts) {
 
 async function load() {
   const id = S.board.id;
-  const [cards, assignees, members] = await Promise.all([
+  const [cards, assignees, members, comments] = await Promise.all([
     supabase.from('cards').select('*').eq('board_id', id),
     supabase.from('card_assignees').select('card_id,user_id').eq('board_id', id),
     supabase.from('members').select('user_id,name,avatar_url,is_admin').eq('board_id', id),
+    supabase.from('card_comments').select('id,card_id,user_id,body,created_at').eq('board_id', id),
   ]);
   const error = cards.error || assignees.error || members.error;
   if (error) return toast(`No se pudo cargar el tablero: ${error.message}`);
@@ -84,6 +86,9 @@ async function load() {
   S.assignees = new Map();
   for (const a of assignees.data) addAssignee(a.card_id, a.user_id);
   S.members = new Map(members.data.map((m) => [m.user_id, m]));
+  // Si aún no existe la tabla de comentarios (migración 004 sin aplicar), el tablero funciona igual
+  S.comments = new Map();
+  for (const c of comments.data || []) addCommentLocal(c);
   render();
   syncOpenPanel((cid) => S.cards.get(cid));
 }
@@ -99,6 +104,44 @@ function refreshMembers() {
     const { data } = await supabase.from('members').select('user_id,name,avatar_url,is_admin').eq('board_id', S.board.id);
     if (data) { S.members = new Map(data.map((m) => [m.user_id, m])); render(); }
   }, 200);
+}
+
+function addCommentLocal(c) {
+  const list = S.comments.get(c.card_id) || [];
+  if (list.some((x) => x.id === c.id)) return false;
+  list.push(c);
+  list.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  S.comments.set(c.card_id, list);
+  return true;
+}
+
+function removeCommentLocal(id) {
+  for (const [cardId, list] of S.comments) {
+    const i = list.findIndex((x) => x.id === id);
+    if (i >= 0) { list.splice(i, 1); if (!list.length) S.comments.delete(cardId); return true; }
+  }
+  return false;
+}
+
+const commentsOf = (id) => (S.cards.has(id) ? S.comments.get(id) || [] : []);
+
+async function addComment(cardId, body) {
+  const { data, error } = await supabase.from('card_comments')
+    .insert({ card_id: cardId, board_id: S.board.id, user_id: S.me, body: body.slice(0, 2000) }).select().single();
+  if (error) { toast(error.message.includes('card_comments') ? 'Falta activar los comentarios en Supabase (migración 004).' : error.message); return false; }
+  addCommentLocal(data);
+  render();
+  return true;
+}
+
+async function removeComment(c) {
+  const ok = await ask({ title: '¿Borrar tu comentario?', ok: 'Borrar', danger: true });
+  if (!ok) return false;
+  const { error } = await supabase.from('card_comments').delete().eq('id', c.id);
+  if (error) { toast(error.message); return false; }
+  removeCommentLocal(c.id);
+  render();
+  return true;
 }
 
 function addAssignee(cardId, userId) {
@@ -139,6 +182,8 @@ function subscribe() {
     .on(...on('DELETE', 'card_assignees', ({ old }) => {
       if (S.assignees.get(old.card_id)?.delete(old.user_id)) render();
     }, false))
+    .on(...on('INSERT', 'card_comments', ({ new: c }) => { if (addCommentLocal(c)) render(); }))
+    .on(...on('DELETE', 'card_comments', ({ old }) => { if (removeCommentLocal(old.id)) render(); }, false))
     .on(...on('INSERT', 'members', ({ new: m }) => { S.members.set(m.user_id, m); render(); }))
     .on(...on('UPDATE', 'members', ({ new: m }) => { S.members.set(m.user_id, m); render(); }))
     .on(...on('DELETE', 'members', ({ old }) => {
@@ -230,6 +275,7 @@ function highlight(ids) {
     void node.offsetWidth;
     node.style.setProperty('--d', `${i * 80}ms`);
     node.classList.add('just-added');
+    cache.get(id).addedAt = Date.now();
     if (i === 0) node.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
   }));
 }
@@ -259,18 +305,21 @@ function addByKind(kind, status, anchor) {
 }
 
 // Tocar una tarjeta: vista previa en grande. El lápiz (o "Editar") abre el panel para cambiarla.
-function previewCard(card, from = null) {
+function previewCard(card, from = null, opts = {}) {
   if (Date.now() - (S.dragEndedAt || 0) < 400) return; // acaba de arrastrarla
   const c = S.cards.get(card.id);
   if (!c) return;
   openPreview(c, {
     getCard: (id) => S.cards.get(id),
+    comments: commentsOf,
+    addComment,
+    removeComment,
     siblings: (x) => sortedCards().filter((y) => y.status === x.status && (visible(y) || y.id === x.id)),
     edit: (x, f) => openCard(x, f && f.isConnected ? f : cache.get(x.id)?.node || null),
     member: (u) => S.members.get(u),
     assigneesOf: (id) => assigneesOf(id),
     me: () => S.me,
-  }, from);
+  }, from, opts);
 }
 
 function openCard(card, from = null) {
@@ -712,6 +761,8 @@ function render() {
     assign: openAssign,
     open: previewCard,
     edit: openCard,
+    comments: (c) => previewCard(c, cache.get(c.id)?.node || null, { comments: true }),
+    commentCount: (id) => commentsOf(id).length,
     remove: deleteCard,
   };
   const animate = S.rendered && !reducedMotion();
@@ -739,7 +790,7 @@ function render() {
       const editable = true; // cualquier miembro puede editar y borrar
       // El texto puede ser largo: la versión (y updated_at) ya cambian cuando cambia
       const { content, description, ...rest } = card;
-      const key = JSON.stringify([rest, content ? 1 : 0, description ? description.length : 0, people, editable]);
+      const key = JSON.stringify([rest, content ? 1 : 0, description ? description.length : 0, people, editable, commentsOf(card.id).length]);
       let entry = cache.get(card.id);
       if (!entry || entry.key !== key) {
         // Encargados recién añadidos (para animar su avatar)
@@ -754,8 +805,13 @@ function render() {
         }
         if (animate && !entry) node.classList.add('enter');
         if (animate && entry && entry.status !== 'done' && card.status === 'done') node.classList.add('just-done');
+        // Si se redibuja justo después de añadirla, no pierde el brillo de "recién añadida"
+        if (entry?.node.classList.contains('just-added') && Date.now() - (entry.addedAt || 0) < 1500) {
+          node.classList.add('just-added');
+          node.style.setProperty('--d', entry.node.style.getPropertyValue('--d'));
+        }
         entry?.node.replaceWith(node);
-        entry = { key, node, ids, status: card.status };
+        entry = { key, node, ids, status: card.status, addedAt: entry?.addedAt };
         cache.set(card.id, entry);
       }
       return entry.node;

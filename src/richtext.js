@@ -143,12 +143,13 @@ export function isEmptyDoc(doc) {
 
 // Resumen para la tarjeta cerrada: primeras líneas, casillas y secciones
 export function summarize(doc, fallbackText = '') {
-  if (!doc) return { lines: fallbackText ? fallbackText.split('\n').slice(0, 3) : [], tasks: null, sections: 0, image: null, images: 0 };
+  if (!doc) return { lines: fallbackText ? fallbackText.split('\n').slice(0, 3) : [], tasks: null, sections: 0, image: null, images: 0, imageList: [] };
   let done = 0, total = 0, sections = 0, images = 0, image = null;
+  const imageList = [];
   const count = (node) => {
     if (node.type === 'taskItem') { total++; if (node.attrs?.checked) done++; }
     if (node.type === 'details') sections++;
-    if (node.type === 'image') { images++; if (!image) image = node.attrs; }
+    if (node.type === 'image') { images++; if (!image) image = node.attrs; if (imageList.length < 50) imageList.push(node.attrs); }
     (node.content || []).forEach(count);
   };
   count(doc);
@@ -170,7 +171,7 @@ export function summarize(doc, fallbackText = '') {
       if (t) lines.push(t);
     }
   }
-  return { lines, tasks: total ? { done, total } : null, sections, image, images };
+  return { lines, tasks: total ? { done, total } : null, sections, image, images, imageList };
 }
 
 // Rutas de almacenamiento de las imágenes del texto (para borrarlas con la tarjeta)

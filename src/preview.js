@@ -2,7 +2,8 @@
 // vídeo, archivo o enlace). Para cambiar algo está el botón "Editar".
 
 import { supabase, BUCKET, DEMO } from './supabase.js';
-import { el, avatar, toast, clearFades, fadeOutCopy, ICONS } from './ui.js';
+import { el, avatar, toast, clearFades, fadeOutCopy, autosize, ICONS } from './ui.js';
+import { collage, openLightbox } from './gallery.js';
 import { cleanDoc, textToDoc } from './richtext.js';
 import { COLORS, COLOR_NAMES, STATUSES, domainOf, extOf, formatDate, formatSize, isOverdue, youtubeId } from './utils.js';
 
@@ -16,21 +17,28 @@ export const isPreviewOpen = () => Boolean(V);
 
 /**
  * c: { getCard(id), siblings(card) → tarjetas de su columna en orden, edit(card, from),
- *      member(u), assigneesOf(id), me() }
+ *      member(u), assigneesOf(id), me(), comments(id), addComment(id, text), removeComment(c) }
+ * opts.comments: abrir ya con los comentarios a la vista
  */
-export function openPreview(card, c, from = null) {
+export function openPreview(card, c, from = null, opts = {}) {
   ctx = c;
   clearFades();
   const dlg = document.getElementById('preview');
   if (!V) {
     V = { dlg, from, expanded: false };
-    dlg.oncancel = (e) => { e.preventDefault(); closePreview(); };
+    // Esc: si estás en los comentarios, primero se cierran ellos (así no pierdes lo escrito)
+    dlg.oncancel = (e) => {
+      e.preventDefault();
+      if (V?.commentsOpen && V.aside?.contains(document.activeElement)) toggleComments();
+      else closePreview();
+    };
     dlg.onpointerdown = (e) => { V && (V.downOutside = e.target === dlg); };
     dlg.onclick = (e) => { if (e.target === dlg && V?.downOutside) closePreview(); };
     dlg.onkeydown = onKey;
   }
   V.id = card.id;
   V.expanded = false;
+  if (opts.comments) V.commentsOpen = true;
   draw();
   if (!dlg.open) {
     dlg.showModal();
@@ -41,7 +49,8 @@ export function openPreview(card, c, from = null) {
       V.box.style.transformOrigin = `${a.left + a.width / 2 - r.left}px ${a.top + a.height / 2 - r.top}px`;
     }
   }
-  V.box.querySelector('.pv-edit')?.focus({ preventScroll: true });
+  if (opts.comments) V.commentInput?.focus({ preventScroll: true });
+  else V.box.querySelector('.pv-edit')?.focus({ preventScroll: true });
 }
 
 export function closePreview({ animate = true } = {}) {
@@ -65,6 +74,8 @@ export function refreshPreview() {
     draw();
     V.scroll.scrollTop = top;
   }
+  // Los comentarios se redibujan aparte (así no se pierde lo que estás escribiendo)
+  if (commentsKey() !== V.commentsKey) drawComments();
 }
 
 const keyOf = (card) => JSON.stringify([card.version, card.title, card.color, card.due_date, card.status, card.file_path, card.url,
@@ -116,11 +127,15 @@ function draw() {
     el('span', { class: 'tp-spacer' }),
     el('button', { class: 'tp-icon', type: 'button', title: 'Anterior (←)', 'aria-label': 'Anterior', disabled: i <= 0, onclick: () => go(-1), html: chevron('m15 18-6-6 6-6') }),
     el('button', { class: 'tp-icon', type: 'button', title: 'Siguiente (→)', 'aria-label': 'Siguiente', disabled: i < 0 || i >= list.length - 1, onclick: () => go(1), html: chevron('m9 18 6-6-6-6') }),
-    el('button', { class: 'btn primary pv-edit', type: 'button', title: 'Editar (E)', onclick: edit }, el('span', { html: ICONS.edit }), 'Editar'),
+    V.commentsBtn = el('button', { class: 'btn pv-comments-btn', type: 'button', title: 'Comentarios', 'aria-expanded': String(Boolean(V.commentsOpen)), onclick: toggleComments },
+      el('span', { html: COMMENT_ICON }), el('span', { class: 'pv-btn-label', text: 'Comentarios' }), el('span', { class: 'pv-badge' })),
+    el('button', { class: 'btn primary pv-edit', type: 'button', title: 'Editar (E)', onclick: edit }, el('span', { html: ICONS.edit }), el('span', { class: 'pv-btn-label', text: 'Editar' })),
     el('button', { class: 'tp-icon', type: 'button', title: 'Cerrar (Esc)', 'aria-label': 'Cerrar', text: '✕', onclick: () => closePreview() }));
 
   const doc = cleanDoc(card.content) || (card.description ? textToDoc(card.description) : null);
-  const body = doc ? renderDoc(doc) : null;
+  // Todas las fotos de la tarea, para el visor (la del adjunto va primero)
+  V.photos = card.kind === 'image' && card.file_path ? [{ src: publicUrl(card.file_path), alt: card.file_name || card.title }] : [];
+  const body = doc ? renderDoc(doc, V.photos) : null;
   const hasSections = Boolean(body?.querySelector('details'));
   const attach = attachment(card);
 
@@ -151,8 +166,94 @@ function draw() {
       pdfViewer(card),
       !body && !attach && el('p', { class: 'pv-empty' }, 'Todavía no tiene texto. ', el('button', { class: 'linklike', type: 'button', text: 'Escribir algo', onclick: edit }))));
 
-  V.box = el('div', { class: 'tp pv' }, head, V.scroll);
+  // Comentarios: panel al lado (o encima en pantallas pequeñas). Se conserva lo que estabas escribiendo.
+  const draft = V.commentInput?.value || '';
+  V.commentList = el('div', { class: 'pv-c-list', role: 'log', 'aria-live': 'polite' });
+  V.commentInput = el('textarea', { class: 'input pv-c-input', rows: '1', maxlength: '2000', placeholder: 'Escribe un comentario…', 'aria-label': 'Escribe un comentario' });
+  V.commentInput.value = draft;
+  const fit = autosize(V.commentInput);
+  const send = el('button', { class: 'btn primary pv-c-send', type: 'submit', text: 'Enviar' });
+  const form = el('form', { class: 'pv-c-form' }, V.commentInput, send);
+  V.commentInput.addEventListener('keydown', (e) => {
+    // Enter envía; Mayús+Enter hace un salto de línea
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
+  });
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const text = V.commentInput.value.trim();
+    if (!text || send.disabled) return;
+    send.disabled = true;
+    const ok = await ctx.addComment(card.id, text);
+    if (!V) return;
+    send.disabled = false;
+    if (ok) { V.commentInput.value = ''; fit(); drawComments(); V.commentList.scrollTop = V.commentList.scrollHeight; }
+    V.commentInput.focus({ preventScroll: true });
+  };
+  V.aside = el('aside', { class: 'pv-comments', hidden: !V.commentsOpen, 'aria-label': 'Comentarios' },
+    el('header', { class: 'pv-c-head' }, el('strong', { text: 'Comentarios' }), el('span', { class: 'tp-spacer' }),
+      el('button', { class: 'tp-icon', type: 'button', 'aria-label': 'Cerrar comentarios', title: 'Cerrar comentarios', text: '✕', onclick: toggleComments })),
+    V.commentList, form);
+
+  V.box = el('div', { class: `tp pv${V.commentsOpen ? ' with-comments' : ''}` }, head, el('div', { class: 'pv-main' }, V.scroll, V.aside));
   V.dlg.replaceChildren(V.box);
+  drawComments();
+  requestAnimationFrame(fit);
+}
+
+const COMMENT_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg>';
+
+function toggleComments() {
+  V.commentsOpen = !V.commentsOpen;
+  V.aside.hidden = !V.commentsOpen;
+  V.box.classList.toggle('with-comments', V.commentsOpen);
+  V.commentsBtn.setAttribute('aria-expanded', String(V.commentsOpen));
+  if (V.commentsOpen) {
+    V.commentList.scrollTop = V.commentList.scrollHeight;
+    V.commentInput.focus({ preventScroll: true });
+    V.aside.animate?.([{ opacity: 0, transform: 'translateX(16px)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'ease-out' });
+  } else {
+    V.commentsBtn.focus({ preventScroll: true });
+  }
+}
+
+const commentsKey = () => {
+  const list = ctx.comments(V.id);
+  return JSON.stringify(list.map((c) => c.id).concat(list.map((c) => ctx.member(c.user_id)?.name || '')));
+};
+
+function drawComments() {
+  if (!V?.commentList) return;
+  const list = ctx.comments(V.id);
+  V.commentsKey = commentsKey();
+  const badge = V.commentsBtn.querySelector('.pv-badge');
+  badge.textContent = list.length ? String(list.length) : '';
+  badge.hidden = !list.length;
+  const atBottom = V.commentList.scrollHeight - V.commentList.scrollTop - V.commentList.clientHeight < 40;
+  const known = new Set([...V.commentList.querySelectorAll('.pv-c')].map((n) => n.dataset.id));
+  V.commentList.replaceChildren(...(list.length ? list.map((c) => {
+    const mine = c.user_id === ctx.me();
+    const who = mine ? 'Tú' : (ctx.member(c.user_id)?.name || 'Alguien');
+    const node = el('div', { class: `pv-c${mine ? ' mine' : ''}`, 'data-id': c.id },
+      avatar(ctx.member(c.user_id), c.user_id, 'sm'),
+      el('div', { class: 'pv-c-bubble' },
+        el('div', { class: 'pv-c-meta' }, el('strong', { text: who }), el('time', { datetime: c.created_at, title: new Date(c.created_at).toLocaleString('es-ES'), text: ago(c.created_at) }),
+          mine && el('button', { class: 'pv-c-del', type: 'button', text: 'Borrar', 'aria-label': 'Borrar mi comentario', onclick: async () => {
+            if (await ctx.removeComment(c)) drawComments();
+          } })),
+        el('p', { class: 'pv-c-text', text: c.body })));
+    if (known.size && !known.has(c.id)) node.classList.add('new');
+    return node;
+  }) : [el('p', { class: 'pv-c-empty' }, 'Todavía no hay comentarios.', el('br'), '¡Escribe el primero!')]));
+  if (atBottom || !known.size) V.commentList.scrollTop = V.commentList.scrollHeight;
+}
+
+function ago(iso) {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 60) return 'ahora';
+  if (s < 3600) return `hace ${Math.floor(s / 60)} min`;
+  if (s < 86400) return `hace ${Math.floor(s / 3600)} h`;
+  if (s < 172800) return 'ayer';
+  return new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
 }
 
 const chevron = (d) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
@@ -167,7 +268,7 @@ function attachment(card) {
   try {
     if (card.kind === 'image' && card.file_path) {
       const src = publicUrl(card.file_path);
-      return el('a', { class: 'pv-media', href: src, target: '_blank', rel: 'noopener', title: 'Abrir la imagen en otra pestaña' },
+      return el('button', { class: 'pv-media', type: 'button', title: 'Ver en grande', onclick: () => openLightbox(V.photos, 0) },
         el('img', { src, alt: card.file_name || card.title }));
     }
     if (card.kind === 'youtube' && card.url) {
@@ -201,14 +302,34 @@ function attachment(card) {
 }
 
 // Documento del editor (ya limpio con cleanDoc) → HTML de solo lectura
-export function renderDoc(doc) {
-  const frag = document.createDocumentFragment();
-  for (const n of doc.content || []) { const x = node(n); if (x) frag.append(x); }
-  return frag;
+// photos: lista donde se van apuntando las fotos (para el visor)
+let photos = [];
+export function renderDoc(doc, list = []) {
+  photos = list;
+  return kids(doc, document.createDocumentFragment());
 }
 
+// Varias fotos seguidas se juntan en un collage
 function kids(n, parent) {
-  for (const c of n.content || []) { const x = node(c); if (x) parent.append(x); }
+  const items = n.content || [];
+  for (let k = 0; k < items.length; k++) {
+    if (items[k].type === 'image') {
+      const run = [];
+      while (k < items.length && items[k].type === 'image') { if (items[k].attrs?.src) run.push(items[k].attrs); k++; }
+      k--;
+      const start = photos.length;
+      photos.push(...run.map((a) => ({ src: a.src, alt: a.alt || '' })));
+      const all = photos;
+      if (run.length > 1) parent.append(collage(run, { className: 'pv-collage', onOpen: (i) => openLightbox(all, start + i) }));
+      else if (run.length) {
+        parent.append(el('button', { class: 'pv-img', type: 'button', title: 'Ver en grande', onclick: () => openLightbox(all, start) },
+          el('img', { src: run[0].src, alt: run[0].alt || '', loading: 'lazy' })));
+      }
+      continue;
+    }
+    const x = node(items[k]);
+    if (x) parent.append(x);
+  }
   return parent;
 }
 
@@ -232,12 +353,6 @@ function node(n) {
     case 'horizontalRule': return document.createElement('hr');
     case 'hardBreak': return document.createElement('br');
     case 'codeBlock': { const pre = document.createElement('pre'); pre.append(kids(n, document.createElement('code'))); return pre; }
-    case 'image': {
-      const src = n.attrs?.src;
-      if (!src) return null;
-      return el('a', { class: 'pv-img', href: src, target: '_blank', rel: 'noopener', title: 'Abrir la imagen en otra pestaña' },
-        el('img', { src, alt: n.attrs.alt || '', loading: 'lazy' }));
-    }
     case 'details': {
       const d = document.createElement('details');
       d.className = 'pv-details';

@@ -1,7 +1,7 @@
 // Ventana pequeña para añadir una imagen, un archivo, un enlace o un vídeo:
 // lo que haya que meter (con vista previa), el título y el color.
 
-import { DEMO } from './supabase.js';
+import { DEMO, supabase, BUCKET } from './supabase.js';
 import { el, colorPicker, fadeOutCopy, clearFades } from './ui.js';
 import { IMAGE_TYPES, FILE_TYPES, MAX_FILE_MB, extOf, formatSize, normalizeUrl, youtubeId, domainOf } from './utils.js';
 import { checkFile, uploadToBoard } from './cardForm.js';
@@ -27,6 +27,7 @@ export function openAddDialog({ kind, board, create }) {
     const T = TEXT[kind];
     let files = [];
     let titleTouched = false;
+    let okText = T.ok;
     const created = [];
 
     const err = el('p', { class: 'error', role: 'alert' });
@@ -72,7 +73,9 @@ export function openAddDialog({ kind, board, create }) {
         zone.classList.toggle('has-files', files.length > 0);
         zoneText.textContent = files.length ? (files.length === 1 ? 'Cambiar' : `${files.length} elegidos · cambiar`) : T.pick;
         suggest(files.length === 1 ? titleFromFile(files[0].name) : '');
-        title.placeholder = files.length > 1 ? 'Título (opcional, se numera: 1, 2, 3…)' : 'Título (opcional)';
+        title.placeholder = kind === 'file' && files.length > 1 ? 'Título (opcional, se numera: 1, 2, 3…)' : 'Título (opcional)';
+        if (kind === 'image') submit.lastChild.textContent = okText = files.length > 1 ? `Publicar ${files.length} fotos juntas` : T.ok;
+        if (kind === 'image' && files.length > 1) list.prepend(el('p', { class: 'ad-note', text: `Se publicarán juntas en una sola tarjeta, en collage.` }));
       };
       input.onchange = () => setFiles([...input.files]);
       // Arrastrar archivos a la zona
@@ -81,12 +84,31 @@ export function openAddDialog({ kind, board, create }) {
       zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('over'); setFiles([...e.dataTransfer.files]); });
 
       body = el('div', { class: 'ad-body' }, zone, list);
-      // Cada archivo se sube y se convierte en tarjeta de uno en uno: si falla uno (p. ej. sin
-      // conexión), los anteriores ya están hechos y al reintentar solo se suben los que faltan.
+      // Varias fotos → UNA sola publicación con collage (como WhatsApp). Se suben de una en una:
+      // si falla alguna (p. ej. sin conexión), al reintentar solo se suben las que faltan.
+      const uploaded = [];
       let numbering = null;
       getFields = async (createOne) => {
-        if (!files.length) throw new Error(kind === 'image' ? 'Elige al menos una imagen.' : 'Elige un archivo.');
+        if (!files.length && !uploaded.length) throw new Error(kind === 'image' ? 'Elige al menos una imagen.' : 'Elige un archivo.');
         const base = title.value.trim();
+        if (kind === 'image' && files.length + uploaded.length > 1) {
+          const total = files.length + uploaded.length;
+          while (files.length) {
+            const f = files[0];
+            submit.lastChild.textContent = `Subiendo ${uploaded.length + 1} de ${total}…`;
+            const up = await uploadToBoard(board.id, f);
+            uploaded.push({ src: supabase.storage.from(BUCKET).getPublicUrl(up.file_path).data.publicUrl, alt: titleFromFile(f.name) });
+            files.shift();
+            list.querySelectorAll('.ad-file')[0]?.classList.add('done');
+          }
+          submit.lastChild.textContent = 'Publicando…';
+          await createOne({
+            kind: 'text',
+            title: (base || `${uploaded.length} fotos`).slice(0, 200),
+            content: { type: 'doc', content: uploaded.map((im) => ({ type: 'image', attrs: { src: im.src, alt: im.alt } })) },
+          });
+          return [];
+        }
         if (!numbering) numbering = new Map(files.map((f, i) => [f, i + 1]));
         const total = numbering.size;
         while (files.length) {
@@ -162,7 +184,7 @@ export function openAddDialog({ kind, board, create }) {
         err.textContent = ex.message || 'No se pudo añadir.';
         submit.disabled = false;
         submit.firstChild.hidden = true;
-        submit.lastChild.textContent = T.ok;
+        submit.lastChild.textContent = okText;
       }
     };
 

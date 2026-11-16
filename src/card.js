@@ -1,6 +1,7 @@
 import { supabase, BUCKET, DEMO } from './supabase.js';
 import { el, avatar, toast, ICONS } from './ui.js';
 import { cleanDoc, summarize } from './richtext.js';
+import { collage } from './gallery.js';
 import { COLORS, domainOf, extOf, formatDate, formatSize, isOverdue, youtubeId } from './utils.js';
 
 const publicUrl = (path, download) =>
@@ -17,7 +18,8 @@ function contentInner(card) {
   switch (card.kind) {
     case 'image': {
       const src = publicUrl(card.file_path);
-      return el('a', { class: 'media', href: src, target: '_blank', rel: 'noopener', title: 'Ver imagen completa' },
+      // Tocar la foto abre la tarea en grande (como el resto de la tarjeta)
+      return el('div', { class: 'media' },
         el('img', { src, alt: card.file_name || card.title, loading: 'lazy', draggable: 'false' }));
     }
     case 'file':
@@ -70,6 +72,12 @@ export function buildCard({ card, people, me, editable, handlers, fresh = null }
   const overdue = isOverdue(card.due_date, card.status);
 
   const sum = summarize(cleanDoc(card.content), card.description || '');
+  // Todas las fotos de la tarea: la del adjunto y las del texto. Varias → collage
+  const photos = [
+    ...(card.kind === 'image' && card.file_path ? [{ src: publicUrl(card.file_path), alt: card.file_name || card.title }] : []),
+    ...sum.imageList,
+  ];
+  const comments = handlers.comments ? handlers.commentCount(card.id) : 0;
   const open = (e) => {
     // Los botones, enlaces, el asa y los vídeos tienen su propia acción
     if (e.target.closest('button, a, .drag-handle, iframe, input')) return;
@@ -88,14 +96,16 @@ export function buildCard({ card, people, me, editable, handlers, fresh = null }
       editable && el('div', { class: 'card-tools' },
         el('button', { class: 'icon-btn card-edit', type: 'button', title: 'Editar', 'aria-label': 'Editar', html: ICONS.edit, onclick: (e) => handlers.edit(card, e.currentTarget.closest('.card')) }),
         el('button', { class: 'icon-btn', type: 'button', title: 'Borrar', 'aria-label': 'Borrar', html: ICONS.trash, onclick: () => handlers.remove(card) }))),
-    sum.image && card.kind === 'text' && el('div', { class: 'media' },
-      el('img', { src: sum.image.src, alt: sum.image.alt || card.title, loading: 'lazy', draggable: 'false' })),
+    photos.length > 1
+      ? collage(photos, { className: 'card-collage' })
+      : sum.image && card.kind === 'text' && el('div', { class: 'media' },
+        el('img', { src: sum.image.src, alt: sum.image.alt || card.title, loading: 'lazy', draggable: 'false' })),
     sum.lines.length > 0 && el('div', { class: 'summary' }, ...sum.lines.map((l) => el('p', { text: l }))),
-    (sum.tasks || sum.sections > 0 || sum.images > 1) && el('div', { class: 'summary-chips' },
+    (sum.tasks || sum.sections > 0 || comments > 0) && el('div', { class: 'summary-chips' },
       sum.tasks && el('span', { class: `chip-mini${sum.tasks.done === sum.tasks.total ? ' all' : ''}`, title: 'Casillas marcadas' }, `☑ ${sum.tasks.done}/${sum.tasks.total}`),
       sum.sections > 0 && el('span', { class: 'chip-mini', title: 'Secciones desplegables' }, `▸ ${sum.sections} ${sum.sections === 1 ? 'sección' : 'secciones'}`),
-      sum.images > 1 && el('span', { class: 'chip-mini', title: 'Imágenes en el texto' }, `🖼 ${sum.images}`)),
-    content(card),
+      comments > 0 && el('button', { class: 'chip-mini chip-comments', type: 'button', title: 'Ver los comentarios', onclick: () => handlers.comments(card) }, `💬 ${comments}`)),
+    photos.length > 1 && card.kind === 'image' ? null : content(card),
     card.due_date && el('div', { class: `due${overdue ? ' overdue' : ''}`, title: overdue ? 'Fecha límite pasada' : 'Fecha límite' },
       el('span', { html: ICONS.calendar }), overdue ? `Venció el ${formatDate(card.due_date)}` : formatDate(card.due_date)),
     el('div', { class: 'card-foot' },
