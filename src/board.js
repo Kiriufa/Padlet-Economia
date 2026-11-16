@@ -1,7 +1,7 @@
 import { supabase, BUCKET } from './supabase.js';
 import { el, ask, toast, avatar, ICONS } from './ui.js';
-import { STATUSES, IMAGE_TYPES, FILE_TYPES, normalizeUrl, youtubeId, domainOf } from './utils.js';
-import { checkFile, uploadToBoard } from './cardForm.js';
+import { STATUSES } from './utils.js';
+import { openAddDialog } from './addDialog.js';
 import { buildCard } from './card.js';
 import { imagePaths } from './richtext.js';
 import { openPanel, setPanelContext, refreshPanel, remoteCardUpdate, remoteCardDelete, syncOpenPanel } from './panel.js';
@@ -186,6 +186,7 @@ const ADD_KINDS = [
 function closeAddMenu() {
   ui.addMenu.hidden = true;
   ui.addBackdrop.hidden = true;
+  document.querySelectorAll('[aria-haspopup=menu][aria-expanded=true]').forEach((b) => b.setAttribute('aria-expanded', 'false'));
 }
 
 function openAddMenu(status, anchor) {
@@ -202,6 +203,7 @@ function openAddMenu(status, anchor) {
   ui.addMenu.classList.toggle('sheet', sheet);
   ui.addMenu.hidden = false;
   ui.addBackdrop.hidden = !sheet;
+  anchor.setAttribute('aria-expanded', 'true');
   if (!sheet) {
     const r = anchor.getBoundingClientRect();
     const w = ui.addMenu.offsetWidth, h = ui.addMenu.offsetHeight;
@@ -215,7 +217,18 @@ function openAddMenu(status, anchor) {
   ui.addMenu.querySelector('.add-opt').focus({ preventScroll: true });
 }
 
-const titleFromFile = (name) => name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) || 'Sin título';
+// Brillo breve en las tarjetas recién añadidas (y se lleva la vista hasta ellas)
+function highlight(ids) {
+  requestAnimationFrame(() => ids.forEach((id, i) => {
+    const node = cache.get(id)?.node;
+    if (!node) return;
+    node.classList.remove('just-added');
+    void node.offsetWidth;
+    node.style.setProperty('--d', `${i * 80}ms`);
+    node.classList.add('just-added');
+    if (i === 0) node.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+  }));
+}
 
 async function createCard(status, fields) {
   const { data, error } = await supabase.from('cards')
@@ -232,60 +245,12 @@ function addByKind(kind, status, anchor) {
   if (kind === 'checklist') {
     return openNew(status, anchor, { type: 'doc', content: [{ type: 'taskList', content: [{ type: 'taskItem', attrs: { checked: false }, content: [{ type: 'paragraph' }] }] }] });
   }
-  if (kind === 'image' || kind === 'file') {
-    const types = kind === 'image' ? IMAGE_TYPES : FILE_TYPES;
-    const input = el('input', { type: 'file', multiple: true, hidden: true, accept: Object.keys(types).map((e) => `.${e}`).join(',') });
-    input.onchange = async () => {
-      const files = [...input.files];
-      input.remove();
-      let n = 0;
-      for (const file of files) {
-        const problem = checkFile(file, kind);
-        if (problem) { toast(`${file.name}: ${problem}`); continue; }
-        if (kind === 'image' && window.createImageBitmap) {
-          try { (await createImageBitmap(file)).close?.(); } catch { toast(`"${file.name}" no es una imagen válida`); continue; }
-        }
-        n++;
-        toast(files.length > 1 ? `Subiendo ${n} de ${files.length}…` : 'Subiendo…');
-        try {
-          const up = await uploadToBoard(S.board.id, file);
-          await createCard(status, { kind, title: titleFromFile(file.name), ...up });
-        } catch (e) {
-          toast(`No se pudo subir "${file.name}": ${e.message}`);
-          n--;
-        }
-      }
-      if (n) toast(n === 1 ? (kind === 'image' ? 'Imagen añadida' : 'Archivo añadido') : `${n} ${kind === 'image' ? 'imágenes añadidas' : 'archivos añadidos'}`);
-    };
-    document.body.append(input);
-    input.click();
-    return;
-  }
-  // Enlace o vídeo
-  (async () => {
-    const isVideo = kind === 'youtube';
-    const value = await ask({
-      title: isVideo ? 'Añadir vídeo de YouTube' : 'Añadir enlace',
-      text: isVideo ? 'Pega el enlace del vídeo.' : 'Pega la dirección de la página.',
-      ok: 'Añadir',
-      input: { type: 'text', inputmode: 'url', autocapitalize: 'off', placeholder: isVideo ? 'https://www.youtube.com/watch?v=…' : 'https://…' },
-    });
-    if (!value) return;
-    try {
-      if (isVideo) {
-        const id = youtubeId(value);
-        if (!id) { toast('No es un enlace de YouTube válido'); return; }
-        await createCard(status, { kind: 'youtube', url: `https://www.youtube.com/watch?v=${id}`, title: 'Vídeo de YouTube' });
-      } else {
-        const url = normalizeUrl(value);
-        if (!url) { toast('El enlace no es válido'); return; }
-        await createCard(status, { kind: 'link', url, title: domainOf(url) });
-      }
-      toast(isVideo ? 'Vídeo añadido' : 'Enlace añadido');
-    } catch (e) {
-      toast(`No se pudo añadir: ${e.message}`);
-    }
-  })();
+  // Imagen, archivo, enlace o vídeo: ventanita con lo que toque, título y color
+  openAddDialog({ kind, board: S.board, create: (fields) => createCard(status, fields) }).then((rows) => {
+    if (!rows.length) return;
+    toast(rows.length === 1 ? 'Añadido' : `${rows.length} añadidos`);
+    highlight(rows.map((r) => r.id));
+  });
 }
 
 function openCard(card, from = null) {
@@ -306,6 +271,12 @@ async function deleteCard(card) {
 async function deleteCardNow(card) {
   const { error } = await supabase.from('cards').delete().eq('id', card.id);
   if (error) { toast(error.message); return false; }
+  // Se encoge y desaparece; las demás suben a ocupar su sitio
+  const node = cache.get(card.id)?.node;
+  if (node?.isConnected && !reducedMotion()) {
+    await node.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.9)' }],
+      { duration: 180, easing: 'ease-in', fill: 'forwards' }).finished.catch(() => {});
+  }
   const files = [card.file_path, ...imagePaths(card.content)].filter(Boolean);
   if (files.length) supabase.storage.from(BUCKET).remove(files);
   S.cards.delete(card.id);

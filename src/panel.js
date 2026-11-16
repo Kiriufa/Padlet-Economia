@@ -2,7 +2,7 @@
 // Se guarda solo (autoguardado) y avisa si otra persona cambia la misma tarea a la vez.
 
 import { supabase, BUCKET } from './supabase.js';
-import { el, ask, toast, avatar, autosize, ICONS } from './ui.js';
+import { el, ask, toast, avatar, autosize, colorPicker, fadeOutCopy, clearFades, ICONS } from './ui.js';
 import { COLORS, STATUSES, formatDate, isOverdue, domainOf, extOf, IMAGE_TYPES, MAX_FILE, MAX_FILE_MB } from './utils.js';
 import { cleanDoc, textToDoc, docToText, isEmptyDoc } from './richtext.js';
 import { openAttachmentForm } from './cardForm.js';
@@ -29,6 +29,7 @@ export const isPanelOpen = () => Boolean(P);
 /** Abre una tarea existente (card) o una nueva en `status`. */
 export function openPanel({ card = null, status = 'todo', returnFocus = null, template = null } = {}) {
   if (P) { switchTo(card, status); return; }
+  clearFades();
   const dlg = document.getElementById('task-panel');
   P = {
     dlg, returnFocus,
@@ -40,6 +41,11 @@ export function openPanel({ card = null, status = 'todo', returnFocus = null, te
   load(card, status);
   dlg.showModal();
   fitToViewport();
+  // Se abre "creciendo" desde la tarjeta o el botón que lo abrió
+  if (returnFocus?.getBoundingClientRect) {
+    const a = returnFocus.getBoundingClientRect(), r = P.box.getBoundingClientRect();
+    P.box.style.transformOrigin = `${a.left + a.width / 2 - r.left}px ${a.top + a.height / 2 - r.top}px`;
+  }
   document.documentElement.classList.add('panel-open');
   // El título recibe el foco al momento (en el iPad así sale el teclado)
   if (!card) P.titleEl.focus();
@@ -68,7 +74,9 @@ export async function closePanel() {
       if (!ok || !P) return;
     }
   }
-  const { dlg, returnFocus } = P;
+  const { dlg, returnFocus, box } = P;
+  // Se cierra al momento (la página responde enseguida) y una copia se desvanece encima
+  fadeOutCopy(box);
   P.editor?.destroy();
   P = null;
   dlg.close();
@@ -254,12 +262,7 @@ function renderMeta() {
   }
 
   // Etiqueta de color
-  const swatches = el('div', { class: 'tp-swatches', role: 'radiogroup', 'aria-label': 'Etiqueta' },
-    el('button', { type: 'button', class: `swatch none${P.color ? '' : ' on'}`, title: 'Sin color', 'aria-label': 'Sin color', onclick: () => setColor(null) }),
-    ...Object.entries(COLORS).map(([name, hex]) => el('button', {
-      type: 'button', class: `swatch${P.color === name ? ' on' : ''}`, style: `background:${hex}`, title: name, 'aria-label': name,
-      onclick: () => setColor(name),
-    })));
+  const swatches = colorPicker({ value: P.color, compact: true, onChange: (c) => setColor(c, false) });
 
   // Fecha límite
   const due = el('input', { class: 'input tp-date', type: 'date', value: P.due || '', 'aria-label': 'Fecha límite' });
@@ -290,9 +293,9 @@ function renderMeta() {
   P.meta.classList.toggle('overdue', overdue);
 }
 
-function setColor(name) {
+function setColor(name, redraw = true) {
   P.color = name;
-  renderMeta();
+  if (redraw) renderMeta();
   changed(true);
 }
 

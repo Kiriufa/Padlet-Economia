@@ -1,5 +1,7 @@
 import { supabase, BUCKET } from './supabase.js';
-import { el } from './ui.js';
+import { el, clearFades } from './ui.js';
+import { closeDialog } from './addDialog.js';
+import { prepareImage, IMAGE_ACCEPT } from './images.js';
 import { FILE_TYPES, IMAGE_TYPES, MAX_FILE, MAX_FILE_MB, extOf, formatSize, normalizeUrl, youtubeId } from './utils.js';
 
 const KINDS = [
@@ -41,6 +43,7 @@ export async function uploadToBoard(boardId, file) {
  * Devuelve la tarjeta guardada o null si se cancela.
  */
 export function openAttachmentForm({ board, card }) {
+  clearFades();
   return new Promise((resolve) => {
     const dlg = document.getElementById('card-dialog');
     let kind = card.kind || 'text';
@@ -69,7 +72,7 @@ export function openAttachmentForm({ board, card }) {
       if (!preview.hidden) preview.src = supabase.storage.from(BUCKET).getPublicUrl(card.file_path).data.publicUrl;
 
       if (kind === 'image' || kind === 'file') {
-        fileInput.accept = accept(kind === 'image' ? IMAGE_TYPES : FILE_TYPES);
+        fileInput.accept = kind === 'image' ? IMAGE_ACCEPT : accept(FILE_TYPES);
         pickZone.querySelector('.dz-text').textContent = `${keepsFile ? 'Cambiar' : 'Elegir'} ${kind === 'image' ? 'imagen' : 'archivo'} · máx. ${MAX_FILE_MB} MB`;
         kindBody.replaceChildren(pickZone, kind === 'image' ? preview : '');
       } else if (kind === 'link' || kind === 'youtube') {
@@ -80,10 +83,14 @@ export function openAttachmentForm({ board, card }) {
       }
     };
 
-    fileInput.onchange = () => {
+    fileInput.onchange = async () => {
       file = fileInput.files[0] || null;
       err.textContent = '';
       if (!file) return drawKind();
+      if (kind === 'image') {
+        fileInfo.textContent = 'Preparando la foto…';
+        try { file = await prepareImage(file); } catch (ex) { err.textContent = ex.message; file = null; fileInput.value = ''; fileInfo.textContent = ''; return; }
+      }
       const problem = checkFile(file, kind);
       if (problem) { err.textContent = problem; file = null; fileInput.value = ''; return; }
       fileInfo.textContent = `${file.name} (${formatSize(file.size)})`;
@@ -96,7 +103,7 @@ export function openAttachmentForm({ board, card }) {
       el('div', { class: 'field' }, kindTabs, kindBody),
       err,
       el('div', { class: 'actions' },
-        el('button', { class: 'btn ghost', type: 'button', text: 'Cancelar', onclick: () => dlg.close() }),
+        el('button', { class: 'btn ghost', type: 'button', text: 'Cancelar', onclick: () => closeDialog(dlg) }),
         save));
 
     form.onsubmit = async (e) => {
@@ -140,7 +147,7 @@ export function openAttachmentForm({ board, card }) {
           supabase.storage.from(BUCKET).remove([card.file_path]);
         }
         done = true;
-        dlg.close();
+        closeDialog(dlg);
         resolve(data);
       } catch (error) {
         if (uploaded) supabase.storage.from(BUCKET).remove([uploaded]);

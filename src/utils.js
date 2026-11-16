@@ -12,6 +12,9 @@ export const COLORS = {
   purple: '#a855f7',
 };
 
+// Nombres en castellano de las etiquetas de color (el valor guardado sigue siendo red, orange…)
+export const COLOR_NAMES = { red: 'Rojo', orange: 'Naranja', green: 'Verde', blue: 'Azul', purple: 'Morado' };
+
 export const MAX_FILE_MB = 50;
 export const MAX_FILE = MAX_FILE_MB * 1024 * 1024;
 

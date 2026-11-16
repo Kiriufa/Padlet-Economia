@@ -789,6 +789,114 @@ button, a, .card, select, input { -webkit-tap-highlight-color: transparent; }
 }
 @keyframes sheet-in { from { transform: translateY(40px); opacity: 0; } }
 
+
+/* ===================================================================
+   Selector de color (etiqueta)
+   =================================================================== */
+.cp { display: flex; flex-wrap: wrap; gap: 6px; }
+.cp-opt {
+  --c: var(--line);
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px 0 10px;
+  border-radius: 99px; border: 1.5px solid var(--line); background: var(--surface); color: var(--text);
+  font-size: 14px; font-weight: 600; cursor: pointer; transition: border-color .15s, background .15s, transform .12s, box-shadow .15s;
+}
+.cp-opt:active { transform: scale(.96); }
+.cp-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) { .cp-opt:hover { border-color: var(--c); } }
+.cp-dot {
+  position: relative; width: 20px; height: 20px; border-radius: 50%; background: var(--c); flex: none;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 8%);
+}
+.cp-opt.none .cp-dot { background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--faint); }
+.cp-opt.none .cp-dot::before { content: ""; position: absolute; inset: 9px 2px; background: var(--faint); transform: rotate(-45deg); border-radius: 2px; }
+.cp-opt.on { border-color: var(--c); background: color-mix(in srgb, var(--c) 12%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent); }
+.cp-opt.none.on { --c: var(--text); background: var(--hover); }
+/* Check en la opción elegida */
+.cp-opt.on .cp-dot::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 12 4 4 8-8'/%3E%3C/svg%3E") center / 13px no-repeat;
+  animation: check-pop .32s cubic-bezier(.3, 1.6, .5, 1);
+}
+.cp-opt.none.on .cp-dot::after { background-image: none; }
+.cp.compact .cp-opt { padding: 0 12px 0 8px; font-size: 13px; }
+
+/* ===================================================================
+   Ventana de añadir (imagen, archivo, enlace, vídeo)
+   =================================================================== */
+.ad-form { gap: 16px; }
+.ad-head { display: flex; align-items: center; gap: 10px; }
+.ad-head .add-ico { width: 34px; height: 34px; }
+.ad-body { display: grid; gap: 10px; }
+.ad-zone {
+  position: relative; display: grid; place-items: center; gap: 4px; text-align: center; cursor: pointer;
+  padding: 22px 16px; border: 2px dashed var(--line); border-radius: 14px; background: var(--bg); color: var(--muted);
+  transition: border-color .15s, background .15s, transform .15s;
+}
+.ad-zone:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ad-zone.over, .ad-zone:active { border-color: var(--accent); background: var(--accent-soft); transform: scale(.99); }
+@media (hover: hover) { .ad-zone:hover { border-color: var(--accent); color: var(--accent); } }
+.ad-zone.has-files { padding: 12px; }
+.ad-zone.has-files .ad-zone-ico, .ad-zone.has-files small { display: none; }
+.ad-zone-ico { color: var(--accent); display: flex; }
+.ad-zone-text { font-weight: 700; color: var(--text); }
+.ad-files { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.ad-files:empty { display: none; }
+.ad-file {
+  display: grid; gap: 4px; padding: 6px; border-radius: 12px; background: var(--bg); min-width: 0;
+  animation: card-in .3s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(var(--i) * 60ms);
+}
+.ad-file img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; background: var(--hover); }
+.ad-file .file-ext { width: 100%; height: 64px; border-radius: 8px; }
+.ad-file-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ad-file small { font-size: 11.5px; color: var(--muted); }
+.ad-preview { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--bg); animation: pop-in .18s ease-out; }
+.ad-preview strong { font-size: 15px; }
+.ad-yt { width: 96px; aspect-ratio: 16 / 9; border-radius: 8px; background: #14161f center / cover no-repeat; display: grid; place-items: center; color: #fff; }
+.ad-title { font-weight: 600; }
+
+/* ===================================================================
+   Animaciones
+   =================================================================== */
+/* Ventanas: salida suave con una copia que no bloquea la página */
+.fade-layer { position: fixed; inset: 0; z-index: 300; pointer-events: none; }
+.fade-backdrop { position: absolute; inset: 0; background: rgb(20 24 38 / 42%); }
+.fade-copy { background: var(--surface); border-radius: 18px; box-shadow: var(--shadow-lg); overflow: hidden; animation: none !important; display: block; }
+dialog.fade-copy { color: var(--text); }
+dialog[open]::backdrop { animation: fade-in .2s ease-out; }
+@keyframes fade-in { from { opacity: 0; } }
+/* Panel: crece desde la tarjeta o el botón que lo abrió */
+.tp { animation: tp-in .26s cubic-bezier(.2, .8, .2, 1); }
+@keyframes tp-in { from { opacity: 0; transform: scale(.9); } }
+/* Menú del "+": opciones escalonadas */
+.add-opt { animation: opt-in .26s cubic-bezier(.2, .8, .2, 1) backwards; }
+.add-opt:nth-child(2) { animation-delay: 30ms; } .add-opt:nth-child(3) { animation-delay: 60ms; }
+.add-opt:nth-child(4) { animation-delay: 90ms; } .add-opt:nth-child(5) { animation-delay: 120ms; } .add-opt:nth-child(6) { animation-delay: 150ms; }
+@keyframes opt-in { from { opacity: 0; transform: translateY(8px) scale(.97); } }
+.add-opt .add-ico { transition: transform .2s cubic-bezier(.3, 1.6, .5, 1); }
+.add-opt:active .add-ico { transform: scale(.9) rotate(-6deg); }
+@media (hover: hover) { .add-opt:hover .add-ico { transform: scale(1.08) rotate(-4deg); } }
+/* Botón "+" que gira al abrir el menú */
+.add-btn span:first-child, .fab svg, .col-add svg { transition: transform .25s cubic-bezier(.3, 1.6, .5, 1); }
+[aria-haspopup="menu"][aria-expanded="true"] svg { transform: rotate(45deg); }
+/* Tarjeta recién añadida: aparece y brilla */
+.card.just-added { animation: added .9s cubic-bezier(.2, .8, .2, 1) var(--d, 0ms) backwards; }
+@keyframes added {
+  0% { opacity: 0; transform: translateY(14px) scale(.94); box-shadow: 0 0 0 0 rgb(45 91 215 / 0%); }
+  35% { opacity: 1; transform: none; box-shadow: 0 0 0 4px rgb(45 91 215 / 35%); }
+  100% { box-shadow: var(--shadow); }
+}
+/* Casillas del texto: "pop" al marcarlas */
+.rt-content ul[data-type="taskList"] li > label input:checked { animation: check-pop .3s cubic-bezier(.3, 1.6, .5, 1); }
+.rt-content ul[data-type="taskList"] li > div { transition: color .25s; }
+/* Encargados nuevos y avatares en el panel */
+.tp-person { animation: opt-in .25s ease-out; }
+/* Aviso inferior con rebote suave */
+#toast { transition: opacity .2s, transform .28s cubic-bezier(.3, 1.4, .5, 1); }
+/* Barra de progreso: destello al completar una tarea */
+.progress-bar span { position: relative; overflow: hidden; }
+.progress-bar span::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgb(255 255 255 / 55%), transparent); transform: translateX(-100%); animation: shine 2.4s ease-in-out infinite; }
+@keyframes shine { 60%, 100% { transform: translateX(100%); } }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

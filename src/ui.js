@@ -1,4 +1,4 @@
-import { colorFor, initials } from './utils.js';
+import { colorFor, initials, COLORS, COLOR_NAMES } from './utils.js';
 
 // Crea un elemento de forma segura (el texto nunca se interpreta como HTML)
 export function el(tag, attrs = {}, ...children) {
@@ -36,6 +36,61 @@ export function autosize(ta) {
   return fit;
 }
 
+// Selector de etiqueta de color: opciones grandes con nombre y un check en la elegida
+export function colorPicker({ value = null, onChange, compact = false }) {
+  let current = value;
+  const opts = [[null, 'Sin color', null], ...Object.entries(COLORS).map(([k, hex]) => [k, COLOR_NAMES[k], hex])];
+  const group = el('div', { class: `cp${compact ? ' compact' : ''}`, role: 'radiogroup', 'aria-label': 'Color de la etiqueta' });
+  const draw = () => {
+    group.replaceChildren(...opts.map(([key, name, hex], i) => {
+      const on = current === key;
+      return el('button', {
+        type: 'button', class: `cp-opt${on ? ' on' : ''}${key ? '' : ' none'}`, role: 'radio', 'aria-checked': String(on),
+        tabindex: on ? '0' : '-1', title: name, style: hex ? `--c:${hex}` : '', 'data-color': key || 'none',
+        onclick: () => { if (current !== key) { current = key; draw(); group.querySelector('.cp-opt.on')?.focus(); onChange?.(key); } },
+        onkeydown: (e) => {
+          const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+          if (!d) return;
+          e.preventDefault();
+          const [k] = opts[(i + d + opts.length) % opts.length];
+          current = k; draw(); group.querySelector('.cp-opt.on')?.focus(); onChange?.(k);
+        },
+      }, el('span', { class: 'cp-dot', 'aria-hidden': 'true' }), el('span', { class: 'cp-name', text: name }));
+    }));
+  };
+  draw();
+  group.getValue = () => current;
+  group.setValue = (v) => { current = v; draw(); };
+  return group;
+}
+
+// Animación de salida sin bloquear: se copia el aspecto de `node`, se cierra lo real al momento
+// y la copia se desvanece encima (sin recibir toques).
+export function fadeOutCopy(node, { backdrop = true } = {}) {
+  if (!node?.isConnected || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const r = node.getBoundingClientRect();
+  if (!r.width) return;
+  const layer = el('div', { class: 'fade-layer', 'aria-hidden': 'true', inert: true });
+  if (backdrop) layer.append(el('div', { class: 'fade-backdrop' }));
+  // De un <dialog> se copia su contenido (una copia de un diálogo cerrado no se vería)
+  const copy = (node.tagName === 'DIALOG' ? node.firstElementChild : node).cloneNode(true);
+  copy.removeAttribute('id');
+  copy.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+  copy.classList.add('fade-copy');
+  Object.assign(copy.style, { position: 'fixed', left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, margin: '0' });
+  layer.append(copy);
+  document.body.append(layer);
+  const ease = { duration: 170, easing: 'ease-in', fill: 'forwards' };
+  copy.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(10px) scale(.97)' }], ease);
+  layer.querySelector('.fade-backdrop')?.animate([{ opacity: 1 }, { opacity: 0 }], ease);
+  setTimeout(() => layer.remove(), 200);
+}
+
+// Al abrir otra ventana, la copia que se estaba desvaneciendo se quita ya
+export function clearFades() {
+  document.querySelectorAll('.fade-layer').forEach((n) => n.remove());
+}
+
 let toastTimer;
 export function toast(message) {
   const t = document.getElementById('toast');
@@ -59,6 +114,7 @@ export function toast(message) {
 
 // Diálogo de confirmación/pregunta. Devuelve true/false, o el texto si lleva input.
 export function ask({ title, text = '', ok = 'Aceptar', cancel = 'Cancelar', danger = false, input = null }) {
+  clearFades();
   return new Promise((resolve) => {
     const dlg = document.getElementById('ask-dialog');
     const field = input ? el('input', { class: 'input', required: true, ...input }) : null;

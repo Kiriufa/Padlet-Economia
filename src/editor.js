@@ -15,6 +15,7 @@ import DOMPurify from 'dompurify';
 import { TEXT_COLORS, HIGHLIGHTS, isAllowedImage } from './richtext.js';
 import { el, toast } from './ui.js';
 import { DEMO } from './supabase.js';
+import { prepareImage, IMAGE_ACCEPT, isHeic } from './images.js';
 import { normalizeUrl } from './utils.js';
 
 const SAFE_URL = /^(https?:\/\/|mailto:)/i;
@@ -134,7 +135,7 @@ export function createRichEditor({ element, toolbar, layer, content, onChange, u
 
   // ---- Imágenes dentro del texto ----
   const insertImages = async (files, pos = null) => {
-    const images = [...files].filter((f) => /^image\//.test(f.type));
+    const images = [...files].filter((f) => /^image\//.test(f.type) || isHeic(f));
     if (!images.length || !uploadImage) return false;
     // Con el cursor en el título de una sección desplegable, la imagen va dentro de la sección (y se abre)
     if (pos == null) {
@@ -155,13 +156,12 @@ export function createRichEditor({ element, toolbar, layer, content, onChange, u
       }
     }
     for (const file of images) {
-      // Comprobar que de verdad es una imagen que se puede abrir (no un archivo dañado)
-      if (window.createImageBitmap) {
-        try { (await createImageBitmap(file)).close?.(); } catch { toast(`"${file.name}" no es una imagen válida`); continue; }
-      }
+      // HEIC → JPG, fotos grandes reducidas, y comprobar que no está dañada
+      let ready;
+      try { ready = await prepareImage(file); } catch (e) { toast(e.message); continue; }
       toast('Subiendo imagen…');
       try {
-        const src = await uploadImage(file);
+        const src = await uploadImage(ready);
         if (!isAllowedImage(src)) throw new Error('No se pudo subir la imagen');
         const node = { type: 'image', attrs: { src, alt: file.name.replace(/\.[^.]+$/, '') } };
         if (pos != null) { editor.chain().focus().insertContentAt(pos, node).run(); pos = null; }
@@ -181,7 +181,7 @@ export function createRichEditor({ element, toolbar, layer, content, onChange, u
     return true;
   };
   const pickImage = () => {
-    const input = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/gif,image/webp', multiple: true, hidden: true });
+    const input = el('input', { type: 'file', accept: IMAGE_ACCEPT, multiple: true, hidden: true });
     input.onchange = () => { insertImages(input.files); input.remove(); };
     document.body.append(input);
     input.click();
@@ -408,12 +408,12 @@ export function createRichEditor({ element, toolbar, layer, content, onChange, u
       // Pegar o soltar imágenes (capturas, fotos del iPad…) las sube y las mete en el texto
       handlePaste: (view, event) => {
         const files = event.clipboardData?.files;
-        if (files?.length && [...files].some((f) => /^image\//.test(f.type))) { insertImages(files); return true; }
+        if (files?.length && [...files].some((f) => /^image\//.test(f.type) || isHeic(f))) { insertImages(files); return true; }
         return false;
       },
       handleDrop: (view, event, slice, moved) => {
         const files = event.dataTransfer?.files;
-        if (moved || !files?.length || ![...files].some((f) => /^image\//.test(f.type))) return false;
+        if (moved || !files?.length || ![...files].some((f) => /^image\//.test(f.type) || isHeic(f))) return false;
         const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? null;
         insertImages(files, pos);
         return true;
