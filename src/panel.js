@@ -125,7 +125,8 @@ function build() {
   // Esc cierra el panel. Lo gestionamos nosotros (el navegador no siempre lanza "cancel"),
   // salvo si Esc ya se ha usado para cerrar el menú "/" o el cuadro del enlace.
   // Se mira antes que el editor (fase de captura): ProseMirror siempre "consume" Esc.
-  if (!dlg.dataset.escBound) dlg.dataset.escBound = '1', dlg.addEventListener('keydown', (e) => {
+  // Se escucha en toda la página: el foco puede quedar fuera del panel (p. ej. tras elegir una foto)
+  if (!dlg.dataset.escBound) dlg.dataset.escBound = '1', document.addEventListener('keydown', (e) => {
     if (!P || e.key !== 'Escape' || e.isComposing) return;
     if (document.getElementById('ask-dialog').open || document.getElementById('card-dialog').open) return;
     if (P?.box.querySelector('.slash-menu')) return; // Esc cierra primero el menú "/"
