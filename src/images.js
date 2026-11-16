@@ -15,6 +15,21 @@ const MIME_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 
 export const isHeic = (f) => /hei[cf]/i.test(f.type || '') || /\.(heic|heif)$/i.test(f.name || '');
 const baseName = (name) => (name || 'foto').replace(/\.[^.]+$/, '') || 'foto';
 
+// Abrir la imagen con <img> (Safari sabe mostrar HEIC aunque createImageBitmap falle)
+function decodeWithImg(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth, h = img.naturalHeight;
+      URL.revokeObjectURL(url);
+      resolve(w && h ? { width: w, height: h, close() {}, _img: img } : null);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
 /** Devuelve un File listo para subir (jpg/png/gif/webp) o lanza un error con un mensaje claro. */
 export async function prepareImage(file) {
   const heic = isHeic(file);
@@ -25,6 +40,9 @@ export async function prepareImage(file) {
   try {
     bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
   } catch {
+    bmp = await decodeWithImg(file); // segunda vía (algunas versiones de Safari)
+  }
+  if (!bmp) {
     throw new Error(heic
       ? `"${file.name}" es una foto HEIC y este navegador no la puede abrir. Súbela desde Safari (Mac/iPad) o expórtala como JPG.`
       : `"${file.name}" no es una imagen válida.`);
@@ -46,7 +64,7 @@ export async function prepareImage(file) {
   const ctx2d = canvas.getContext('2d');
   ctx2d.fillStyle = '#ffffff'; // las zonas transparentes quedan en blanco
   ctx2d.fillRect(0, 0, w, h);
-  ctx2d.drawImage(bmp, 0, 0, w, h);
+  ctx2d.drawImage(bmp._img || bmp, 0, 0, w, h);
   bmp.close?.();
   const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.86));
   if (!blob) throw new Error(`No se pudo preparar "${file.name}".`);

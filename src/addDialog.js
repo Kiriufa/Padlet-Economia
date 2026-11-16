@@ -81,17 +81,25 @@ export function openAddDialog({ kind, board, create }) {
       zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('over'); setFiles([...e.dataTransfer.files]); });
 
       body = el('div', { class: 'ad-body' }, zone, list);
-      getFields = async () => {
+      // Cada archivo se sube y se convierte en tarjeta de uno en uno: si falla uno (p. ej. sin
+      // conexión), los anteriores ya están hechos y al reintentar solo se suben los que faltan.
+      let numbering = null;
+      getFields = async (createOne) => {
         if (!files.length) throw new Error(kind === 'image' ? 'Elige al menos una imagen.' : 'Elige un archivo.');
         const base = title.value.trim();
-        const out = [];
-        for (const [i, f] of files.entries()) {
-          submit.lastChild.textContent = files.length > 1 ? `Subiendo ${i + 1} de ${files.length}…` : 'Subiendo…';
+        if (!numbering) numbering = new Map(files.map((f, i) => [f, i + 1]));
+        const total = numbering.size;
+        while (files.length) {
+          const f = files[0];
+          const n = numbering.get(f);
+          submit.lastChild.textContent = total > 1 ? `Subiendo ${n} de ${total}…` : 'Subiendo…';
           const up = await uploadToBoard(board.id, f);
-          const t = base ? (files.length > 1 ? `${base} ${i + 1}` : base) : (titleFromFile(f.name) || 'Sin título');
-          out.push({ kind, title: t.slice(0, 200), ...up });
+          const t = base ? (total > 1 ? `${base} ${n}` : base) : (titleFromFile(f.name) || 'Sin título');
+          await createOne({ kind, title: t.slice(0, 200), ...up });
+          files.shift();
+          list.querySelectorAll('.ad-file')[0]?.remove();
         }
-        return out;
+        return [];
       };
     } else {
       const isVideo = kind === 'youtube';
@@ -114,7 +122,11 @@ export function openAddDialog({ kind, board, create }) {
         }
       });
       body = el('div', { class: 'ad-body' }, el('label', { class: 'label', for: 'ad-url', text: isVideo ? 'Enlace del vídeo' : 'Dirección de la página' }), url, preview);
-      getFields = async () => {
+      getFields = async (createOne) => {
+        await createOne(...(await linkFields()));
+        return [];
+      };
+      const linkFields = async () => {
         if (isVideo) {
           const id = youtubeId(url.value);
           if (!id) throw new Error('No es un enlace de YouTube válido.');
@@ -144,8 +156,7 @@ export function openAddDialog({ kind, board, create }) {
       submit.disabled = true;
       submit.firstChild.hidden = false;
       try {
-        const rows = await getFields();
-        for (const row of rows) created.push(await create({ ...row, color: picker.getValue() }));
+        await getFields(async (row) => { created.push(await create({ ...row, color: picker.getValue() })); });
         closeDialog(dlg);
       } catch (ex) {
         err.textContent = ex.message || 'No se pudo añadir.';
@@ -155,7 +166,10 @@ export function openAddDialog({ kind, board, create }) {
       }
     };
 
-    dlg.onclose = () => resolve(created);
+    dlg.onclose = () => {
+      dlg.querySelectorAll('.ad-file img').forEach((img) => URL.revokeObjectURL(img.src)); // liberar las vistas previas
+      resolve(created);
+    };
     dlg.replaceChildren(form);
     dlg.showModal();
   });
