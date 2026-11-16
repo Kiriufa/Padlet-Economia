@@ -317,7 +317,11 @@ async function busy(button, text, fn) {
 // Para asignar o adjuntar hace falta que la tarea exista: si aún no está guardada, se guarda ya
 // (si no tiene título, como "Sin título"; se puede poner después)
 async function ensureSaved() {
-  if (P.id) return true;
+  // Ya existe: se termina de guardar lo pendiente para que no se cruce con lo que viene (adjunto…)
+  if (P.id) {
+    await flush();
+    return Boolean(P && !P.conflict && !P.deleted);
+  }
   P.dirty = true;
   P.forceCreate = true;
   await flush();
@@ -493,10 +497,11 @@ function applyRemote(card) {
 function showConflict(theirs) {
   clearTimeout(P.timer);
   P.conflict = theirs;
-  const who = theirs.updated_by && theirs.updated_by !== ctx.me() ? ctx.member(theirs.updated_by)?.name || 'Otra persona' : 'Otra persona';
+  const fromMe = theirs.updated_by === ctx.me();
+  const who = !fromMe && theirs.updated_by ? ctx.member(theirs.updated_by)?.name || 'Otra persona' : 'Otra persona';
   setStatus('Sin guardar', 'error');
   P.banner.replaceChildren(
-    el('p', {}, el('strong', { text: `${who} ha cambiado esta tarea mientras escribías.` }),
+    el('p', {}, el('strong', { text: fromMe ? 'Has cambiado esta tarea en otra pestaña o dispositivo mientras escribías aquí.' : `${who} ha cambiado esta tarea mientras escribías.` }),
       ' Tus cambios no se han guardado todavía. Elige qué hacer:'),
     el('div', { class: 'tp-banner-actions' },
       el('button', { class: 'btn small', type: 'button', text: 'Ver su versión', onclick: takeTheirs }),
