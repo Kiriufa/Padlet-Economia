@@ -63,6 +63,7 @@ export function buildCard({ card, people, me, editable, handlers, fresh = null }
 
   return el('article', { class: `card${card.color ? ' tagged' : ''}`, 'data-id': card.id, style: card.color ? `--tag:${COLORS[card.color]}` : '' },
     el('div', { class: 'card-top' },
+      el('span', { class: 'drag-handle', title: 'Arrastra desde aquí para mover', 'aria-hidden': 'true' }),
       el('h3', { text: card.title }),
       editable && el('div', { class: 'card-tools' },
         el('button', { class: 'icon-btn', type: 'button', title: 'Editar', 'aria-label': 'Editar', html: ICONS.edit, onclick: () => handlers.edit(card) }),

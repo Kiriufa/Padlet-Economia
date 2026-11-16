@@ -1,7 +1,9 @@
 // Drag & drop con Pointer Events: funciona con ratón y con el dedo.
 // En táctil hay que mantener pulsado un momento (así el scroll sigue funcionando).
-// Animaciones: la tarjeta se "levanta" y se inclina según la velocidad, las demás
-// se apartan con suavidad y al soltar la tarjeta vuela a su sitio.
+// Físicas: la tarjeta gira alrededor del punto por donde la coges, como una hoja de
+// papel sobre la mesa. Si tiras desde una esquina, el resto se queda atrás por el
+// rozamiento; si la coges por el centro, apenas gira. Al parar, se endereza poco a poco.
+// Las demás tarjetas se apartan con suavidad y al soltar la tarjeta vuela a su sitio.
 
 const HOLD_MS = 260;
 const EDGE = 70; // zona junto al borde que activa el desplazamiento automático
@@ -9,6 +11,12 @@ const MAX_SPEED = 18; // px por fotograma
 const TAB_DWELL_MS = 350;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const EASE = 'cubic-bezier(.2, .8, .2, 1)';
+
+// Constantes de la simulación (por fotograma, ángulos en radianes)
+const FRICTION_TORQUE = 0.000003; // cuánto hace girar el rozamiento
+const SPRING = 0.006; // tendencia a enderezarse
+const DAMPING = 0.16; // amortiguación del giro
+const MAX_ANGLE = 0.3; // ~17°
 
 export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
   let s = null;
@@ -19,6 +27,12 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
     const card = e.target.closest('.card');
     if (!card || e.target.closest('button, a, input, select, textarea, iframe')) return;
     s = { card, id: card.dataset.id, x: e.clientX, y: e.clientY, px: e.clientX, py: e.clientY, pid: e.pointerId, touch: e.pointerType !== 'mouse', active: false };
+    // Desde el asa se arrastra al momento, también con el dedo
+    if (e.target.closest('.drag-handle')) {
+      e.preventDefault();
+      if (s.touch) start();
+      return;
+    }
     if (s.touch) {
       card.classList.add('pressing');
       s.timer = setTimeout(start, HOLD_MS);
@@ -66,13 +80,15 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
     const { card } = s;
     const r = card.getBoundingClientRect();
     Object.assign(s, {
-      active: true, offX: s.x - r.left, offY: s.y - r.top,
-      tilt: 0, scale: 1, lastX: s.px, moved: false,
+      active: true, offX: s.x - r.left, offY: s.y - r.top, w: r.width, h: r.height,
+      angle: 0, spin: 0, scale: 1, lastX: s.px, lastY: s.py, moved: false,
     });
     s.ghost = card.cloneNode(true);
     s.ghost.classList.add('ghost');
     s.ghost.classList.remove('pressing', 'enter');
     s.ghost.style.width = `${r.width}px`;
+    // Gira alrededor del punto por donde se ha cogido
+    s.ghost.style.transformOrigin = `${s.offX}px ${s.offY}px`;
     document.body.append(s.ghost);
     s.placeholder = document.createElement('div');
     s.placeholder.className = 'placeholder';
@@ -91,12 +107,22 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
   function frame() {
     if (!s?.active) return;
     const { px, py } = s;
-    const vx = px - s.lastX;
-    s.lastX = px;
-    const still = reduced();
-    s.tilt += ((still ? 0 : Math.max(-8, Math.min(8, vx * 0.9))) - s.tilt) * 0.2;
-    s.scale += ((still ? 1 : 1.04) - s.scale) * 0.25;
-    s.ghost.style.transform = `translate(${px - s.offX}px, ${py - s.offY}px) rotate(${s.tilt.toFixed(2)}deg) scale(${s.scale.toFixed(3)})`;
+    const vx = px - s.lastX, vy = py - s.lastY;
+    s.lastX = px; s.lastY = py;
+    if (reduced()) {
+      s.angle = 0; s.scale = 1;
+    } else {
+      // Vector desde el punto de agarre hasta el centro de la tarjeta, girado con ella
+      const cx = s.w / 2 - s.offX, cy = s.h / 2 - s.offY;
+      const cos = Math.cos(s.angle), sin = Math.sin(s.angle);
+      const rx = cx * cos - cy * sin, ry = cx * sin + cy * cos;
+      // El rozamiento actúa en el centro, en contra del movimiento: par = r × F
+      const torque = (rx * -vy - ry * -vx) * FRICTION_TORQUE;
+      s.spin += torque - s.angle * SPRING - s.spin * DAMPING;
+      s.angle = Math.max(-MAX_ANGLE, Math.min(MAX_ANGLE, s.angle + s.spin));
+      s.scale += (1.04 - s.scale) * 0.25;
+    }
+    s.ghost.style.transform = `translate(${px - s.offX}px, ${py - s.offY}px) rotate(${s.angle.toFixed(4)}rad) scale(${s.scale.toFixed(3)})`;
 
     // No desplazar hasta que la tarjeta se haya movido un poco
     if (!s.moved) s.moved = Math.hypot(px - s.x, py - s.y) > 40;
@@ -225,8 +251,8 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
     landing = true;
     const anim = ghost.animate([
       { transform: ghost.style.transform },
-      { transform: `translate(${r.left}px, ${r.top}px) rotate(0deg) scale(1)` },
-    ], { duration: 200, easing: EASE, fill: 'forwards' });
+      { transform: `translate(${r.left}px, ${r.top}px) rotate(0rad) scale(1)` },
+    ], { duration: 220, easing: EASE, fill: 'forwards' });
     anim.onfinish = done;
     anim.oncancel = done;
   }

@@ -232,8 +232,21 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .card.just-done .card-top h3::before { animation: check-pop .5s cubic-bezier(.3, 1.6, .5, 1); }
 @keyframes check-pop { 0% { transform: scale(0); } 100% { transform: scale(1); } }
 @keyframes done-glow { 0% { box-shadow: 0 0 0 3px rgb(31 157 99 / 45%), var(--shadow); } 100% { box-shadow: var(--shadow); } }
-/* Etiqueta de color: pastilla encima del título */
-.card.tagged::before { content: ""; width: 36px; height: 6px; border-radius: 99px; background: var(--tag); }
+/* Asa de arrastre junto al título, con el color de la etiqueta (gris si no tiene) */
+.card { --tag: #9aa1b2; }
+.drag-handle {
+  flex: none; position: relative; width: 20px; height: 26px; margin: -1px 2px 0 -4px; border-radius: 7px;
+  background: color-mix(in srgb, var(--tag) 16%, transparent);
+  cursor: grab; touch-action: none; transition: background .15s, transform .15s;
+}
+.drag-handle::before {
+  content: ""; position: absolute; inset: 6px 5px;
+  background-image: radial-gradient(circle, var(--tag) 1.5px, transparent 1.9px);
+  background-size: 5px 5px; background-position: center;
+}
+.card:hover .drag-handle, .drag-handle:focus-visible { background: color-mix(in srgb, var(--tag) 28%, transparent); }
+.drag-handle:hover { transform: scale(1.08); }
+.card.pressing .drag-handle, .card.ghost .drag-handle { background: color-mix(in srgb, var(--tag) 36%, transparent); }
 .card.pressing { transform: scale(.97); box-shadow: var(--shadow-hover); transition-duration: .26s; }
 .card.dragging { display: none; }
 .card.ghost {
