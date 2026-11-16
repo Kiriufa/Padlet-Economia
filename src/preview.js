@@ -148,6 +148,7 @@ function draw() {
       attach,
       toggle,
       body && el('div', { class: 'pv-content rt-content' }, body),
+      pdfViewer(card),
       !body && !attach && el('p', { class: 'pv-empty' }, 'Todavía no tiene texto. ', el('button', { class: 'linklike', type: 'button', text: 'Escribir algo', onclick: edit }))));
 
   V.box = el('div', { class: 'tp pv' }, head, V.scroll);
@@ -155,6 +156,12 @@ function draw() {
 }
 
 const chevron = (d) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
+
+// Los PDF se pueden leer aquí mismo (debajo del texto)
+function pdfViewer(card) {
+  if (DEMO || card.kind !== 'file' || !card.file_path || extOf(card.file_name) !== 'pdf') return null;
+  return el('iframe', { class: 'pv-pdf', src: publicUrl(card.file_path), title: card.file_name || 'PDF', loading: 'lazy' });
+}
 
 function attachment(card) {
   try {
@@ -187,8 +194,6 @@ function attachment(card) {
           !DEMO && ext === 'pdf' && el('a', { class: 'btn small ghost', href: publicUrl(card.file_path), target: '_blank', rel: 'noopener', text: 'Abrir' }),
           el('a', { class: 'btn small', href: publicUrl(card.file_path, card.file_name), onclick: DEMO ? (e) => { e.preventDefault(); toast('En la demo los archivos no se descargan'); } : null },
             el('span', { html: ICONS.download }), 'Descargar')));
-      // Los PDF se pueden leer aquí mismo
-      if (ext === 'pdf' && !DEMO) box.append(el('iframe', { class: 'pv-pdf', src: publicUrl(card.file_path), title: card.file_name || 'PDF', loading: 'lazy' }));
       return box;
     }
   } catch (e) { console.warn('Adjunto no válido', e); }
