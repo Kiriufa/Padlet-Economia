@@ -1,7 +1,7 @@
 # Tablero de tareas
 
 Tablero tipo Padlet para organizar tareas en grupo, con tres columnas ("Por hacer", "En proceso" y "Hecho"), tarjetas que se arrastran, encargados y tiempo real.
-Se entra con Google y el código del tablero.
+Cada persona crea su cuenta (con email o con Google) y elige el nombre que verán los demás. Se invita a la gente con un enlace.
 
 **Stack:** Vite + JavaScript (sin frameworks) · Supabase (Postgres, Auth, Realtime, Storage) · Vercel
 
@@ -27,7 +27,18 @@ En la web publicada también puedes verla añadiendo `?demo` a la dirección.
    - **Project URL**
    - **anon public key**. En los proyectos nuevos se llama *Publishable key*; también sirve.
 
-## 2. Activar el inicio de sesión con Google
+## 2. Cuentas con email
+
+En **Authentication → Sign In / Providers → Email**, el proveedor de email viene activado de serie.
+
+> **Importante para un grupo de 30-50 personas:** el correo que Supabase trae de serie solo envía unos pocos emails por hora.
+> Con tanta gente creando cuenta a la vez, los correos de confirmación no llegarían a todos. Tienes dos opciones:
+> - **La más simple:** desactiva **Confirm email** en ese mismo apartado. La gente entra nada más crear la cuenta.
+> - **La más segura:** configura un servidor de correo propio en **Project Settings → Authentication → SMTP Settings** (por ejemplo, Resend o Brevo, que tienen plan gratuito).
+>
+> El correo de "¿Olvidaste la contraseña?" también usa este servidor.
+
+## 3. Activar el inicio de sesión con Google (opcional)
 
 **En Google Cloud** ([console.cloud.google.com](https://console.cloud.google.com)):
 
@@ -52,7 +63,7 @@ En la web publicada también puedes verla añadiendo `?demo` a la dirección.
    ```
    La segunda la tendrás después del paso 4. En **Site URL** pon la dirección de Vercel.
 
-## 3. Arrancarlo en local
+## 4. Arrancarlo en local
 
 Necesitas [Node.js](https://nodejs.org) 18 o superior.
 
@@ -71,7 +82,7 @@ VITE_SUPABASE_ANON_KEY=tu-clave-anon
 
 Abre http://localhost:5173. El archivo `.env` no se sube a Git: está en `.gitignore`.
 
-## 4. Subirlo a Vercel
+## 5. Subirlo a Vercel
 
 1. Sube este repositorio a GitHub.
 2. En [vercel.com](https://vercel.com) → **Add New → Project** → importa el repositorio. Vercel detecta Vite solo: el comando de build es `npm run build` y la carpeta de salida es `dist`.
@@ -81,23 +92,26 @@ Abre http://localhost:5173. El archivo `.env` no se sube a Git: está en `.gitig
    | `VITE_SUPABASE_URL` | tu Project URL |
    | `VITE_SUPABASE_ANON_KEY` | tu anon key |
 4. Pulsa **Deploy**.
-5. Copia la dirección que te da Vercel (`https://….vercel.app`) y añádela en Supabase, en **Authentication → URL Configuration** (paso 2).
+5. Copia la dirección que te da Vercel (`https://….vercel.app`) y añádela en Supabase, en **Authentication → URL Configuration** (paso 3). Sin esto no funcionan ni Google ni los enlaces de los correos.
 
 ---
 
 ## Cómo se usa
 
-- **Para organizar:** entra con Google → "Crea un tablero nuevo" → elige un nombre y un PIN de admin. Pulsa **Código: XXXXXX** para copiar el enlace de invitación y compártelo.
-- **Para participar:** abre el enlace, o entra y escribe el código. La app recuerda el último tablero.
-- **Mover tarjetas:** arrástralas. En el móvil, mantén el dedo pulsado un momento y arrastra. Para cambiar de columna, deja el dedo un instante sobre la pestaña de arriba.
-- **Admin desde otra cuenta:** menú del avatar → "Entrar como admin (PIN)". Después de 5 PIN incorrectos, esa cuenta queda bloqueada para ese tablero.
+- **Para organizar:** crea tu cuenta → "Crear un tablero nuevo" → elige un nombre y un PIN de admin. Se abre la ventana **Invitar** con el enlace: cópialo o compártelo por WhatsApp, Classroom, etc. También la puedes abrir con el botón **Invitar** de arriba.
+- **Para participar:** abre el enlace → crea tu cuenta con tu nombre (o entra si ya tienes una) → pasas directamente al tablero. También se puede escribir el código en "Unirme con un código".
+- **Mis tableros:** al entrar ves todos tus tableros. Desde el menú del avatar puedes volver a esta lista, cambiar tu nombre o salir de un tablero.
+- **Quién se encarga:** "Me lo quedo" te apunta a una tarea, "Asignar a…" apunta a otra persona, y "Soltar" te quita. Cada tarjeta muestra los nombres de los encargados.
+- **Mover tarjetas:** arrástralas. En el móvil, mantén el dedo pulsado un momento y arrastra. Para cambiar de columna, lleva el dedo al borde de la pantalla o déjalo un instante sobre la pestaña de arriba.
+- **Admin:** quien crea el tablero es el admin y es el único que puede borrar el tablero entero. Otra cuenta puede hacerse admin desde el menú del avatar → "Entrar como admin (PIN)". Después de 5 PIN incorrectos, esa cuenta queda bloqueada para ese tablero.
 
 ## Seguridad
 
-- Hay que iniciar sesión con Google, y solo los miembros de un tablero pueden ver o tocar su contenido.
+- Hay que tener cuenta, y solo los miembros de un tablero pueden ver o tocar su contenido.
 - Row Level Security:
-  - Solo el autor o el admin pueden editar o borrar una tarjeta.
-  - Cualquier miembro puede crear tarjetas, moverlas (con la función `move_card`, que solo cambia la columna y el orden) y asignar a gente del tablero.
+  - Cualquier miembro del tablero puede crear, editar, mover y borrar cualquier tarjeta, y asignar o quitar a cualquier persona del tablero. Al borrar siempre se pide confirmación.
+  - Quien no es miembro no puede hacer nada.
+- El nombre de cada persona se guarda en `profiles` y solo se cambia con la función `set_my_name`, que lo actualiza en todos sus tableros.
 - El PIN se guarda cifrado (bcrypt) y se comprueba en la función `claim_admin`. La tabla de tableros no se puede leer desde el navegador.
 - Archivos: hasta 50 MB y solo de los tipos permitidos (imágenes, PDF, Office, OpenDocument, ZIP, TXT y CSV). Se comprueba en el navegador y también en el bucket.
 

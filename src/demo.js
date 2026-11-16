@@ -89,7 +89,7 @@ export function createDemoClient() {
     me = { id: `demo-tab-${n % PEOPLE.length}`, name: PEOPLE[n % PEOPLE.length] };
     safe(() => sessionStorage.setItem('tablero-demo-user', JSON.stringify(me)));
   }
-  const user = { id: me.id, email: 'demo@ejemplo.es', user_metadata: { full_name: me.name } };
+  const user = { id: me.id, email: 'demo@ejemplo.es', app_metadata: { provider: 'email' }, user_metadata: { full_name: me.name } };
 
   const member = (b) => db.members.find((m) => m.board_id === b && m.user_id === me.id);
   const isMember = (b) => Boolean(member(b));
@@ -131,6 +131,7 @@ export function createDemoClient() {
     eq(col, val) { this.filters.push([col, val]); return this; }
     match(obj) { for (const e of Object.entries(obj)) this.filters.push(e); return this; }
     single() { this.one = true; return this; }
+    maybeSingle() { this.one = true; this.maybe = true; return this; }
     then(ok, ko) { return Promise.resolve().then(() => this.run()).then(ok, ko); }
 
     rows() {
@@ -138,6 +139,7 @@ export function createDemoClient() {
     }
     out(rows) {
       if (!this.wantRows) return { data: null, error: null };
+      if (this.one && this.maybe && !rows.length) return { data: null, error: null };
       if (this.one) return rows.length === 1 ? { data: clone(rows[0]), error: null } : err('No se encontró la fila', 'PGRST116');
       return { data: clone(rows), error: null };
     }
@@ -145,6 +147,7 @@ export function createDemoClient() {
     run() {
       const t = this.table;
       if (t === 'boards') return { data: [], error: null };
+      if (t === 'profiles') return this.out([{ id: user.id, name: me.name }].filter((r) => this.filters.every(([c, v]) => r[c] === v)));
       if (this.op === 'select') {
         db = load();
         return this.out(this.rows().filter((r) => isMember(r.board_id)));
@@ -178,7 +181,7 @@ export function createDemoClient() {
 
     update() {
       if (this.table !== 'cards') return this.out([]);
-      const rows = this.rows().filter((c) => c.created_by === user.id || isAdmin(c.board_id));
+      const rows = this.rows().filter((c) => isMember(c.board_id));
       for (const c of rows) {
         Object.assign(c, this.payload, { updated_at: now() });
         emit('cards', 'UPDATE', c);
@@ -189,15 +192,14 @@ export function createDemoClient() {
     remove() {
       let rows = this.rows();
       if (this.table === 'cards') {
-        rows = rows.filter((c) => c.created_by === user.id || isAdmin(c.board_id));
+        rows = rows.filter((c) => isMember(c.board_id));
         db.cards = db.cards.filter((c) => !rows.includes(c));
         for (const c of rows) {
           db.card_assignees = db.card_assignees.filter((a) => a.card_id !== c.id);
           emit('cards', 'DELETE', null, { id: c.id });
         }
       } else if (this.table === 'card_assignees') {
-        rows = rows.filter((a) => isMember(a.board_id) && (a.user_id === user.id || isAdmin(a.board_id)
-          || db.cards.some((c) => c.id === a.card_id && c.created_by === user.id)));
+        rows = rows.filter((a) => isMember(a.board_id));
         db.card_assignees = db.card_assignees.filter((a) => !rows.includes(a));
         for (const a of rows) emit('card_assignees', 'DELETE', null, { card_id: a.card_id, user_id: a.user_id });
       } else {
@@ -243,6 +245,28 @@ export function createDemoClient() {
       emit('cards', 'UPDATE', c);
       return { data: null, error: null };
     },
+    set_my_name({ p_name }) {
+      const name = String(p_name || '').trim();
+      if (!name || name.length > 60) return err('El nombre debe tener entre 1 y 60 caracteres');
+      me.name = name;
+      safe(() => sessionStorage.setItem('tablero-demo-user', JSON.stringify(me)));
+      for (const m of db.members.filter((x) => x.user_id === user.id)) { m.name = name; emit('members', 'UPDATE', m); }
+      return { data: null, error: null };
+    },
+    my_boards() {
+      const data = db.members.filter((m) => m.user_id === user.id).map((m) => {
+        const b = db.boards.find((x) => x.id === m.board_id);
+        return { id: b.id, code: b.code, name: b.name, is_admin: m.is_admin, cards: db.cards.filter((c) => c.board_id === b.id).length };
+      });
+      return { data, error: null };
+    },
+    leave_board({ p_board }) {
+      const gone = db.card_assignees.filter((a) => a.board_id === p_board && a.user_id === user.id);
+      db.card_assignees = db.card_assignees.filter((a) => !gone.includes(a));
+      for (const a of gone) emit('card_assignees', 'DELETE', null, { card_id: a.card_id, user_id: a.user_id });
+      db.members = db.members.filter((m) => !(m.board_id === p_board && m.user_id === user.id));
+      return { data: null, error: null };
+    },
     delete_board({ p_board }) {
       if (!isAdmin(p_board)) return err('Solo el admin puede borrar el tablero');
       for (const c of db.cards.filter((x) => x.board_id === p_board)) emit('cards', 'DELETE', null, { id: c.id });
@@ -269,6 +293,11 @@ export function createDemoClient() {
       getSession: async () => ({ data: { session: { user } } }),
       signInWithOAuth: async () => ({ error: null }),
       signOut: async () => { safe(() => sessionStorage.removeItem('tablero-demo-user')); return { error: null }; },
+      signUp: async () => ({ data: { session: { user } }, error: null }),
+      signInWithPassword: async () => ({ data: { session: { user } }, error: null }),
+      resetPasswordForEmail: async () => ({ error: null }),
+      updateUser: async () => ({ error: null }),
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
     },
     from: (table) => ({
       select: () => new Query(table, 'select'),

@@ -48,6 +48,15 @@ function content(card) {
   }
 }
 
+// "Tú", "Luis", "Luis y Sofía", "Luis, Sofía +2"
+function whoText(people, me) {
+  const names = people.map(([u, m]) => (u === me ? 'Tú' : (m?.name || '?').split(' ')[0]));
+  names.sort((a, b) => (a === 'Tú' ? -1 : b === 'Tú' ? 1 : 0));
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} y ${names[1]}`;
+  return `${names[0]}, ${names[1]} +${names.length - 2}`;
+}
+
 export function buildCard({ card, people, me, editable, handlers, fresh = null }) {
   const mine = people.some(([u]) => u === me);
   const overdue = isOverdue(card.due_date, card.status);
@@ -70,7 +79,8 @@ export function buildCard({ card, people, me, editable, handlers, fresh = null }
             if (fresh?.has(u)) a.classList.add('pop');
             return a;
           })
-          : el('span', { class: 'muted small', text: 'Sin encargado' })),
+          : el('span', { class: 'muted small', text: 'Sin encargado' }),
+        people.length > 0 && el('span', { class: 'who', text: whoText(people, me), title: people.map(([, m]) => m?.name || '?').join(', ') })),
       el('div', { class: 'foot-actions' },
         mine
           ? el('button', { class: 'btn small ghost', type: 'button', text: 'Soltar', title: 'Quitarme de esta tarea', onclick: () => handlers.leave(card) })

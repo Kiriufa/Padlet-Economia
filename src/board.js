@@ -22,7 +22,6 @@ const ui = {};
 let actions;
 
 export const isAdmin = () => Boolean(S.members.get(S.me)?.is_admin);
-const canEdit = (card) => card.created_by === S.me || isAdmin();
 const assigneesOf = (id) => S.assignees.get(id) || new Set();
 
 export function openBoard(app, board, user, acts) {
@@ -40,6 +39,8 @@ export function openBoard(app, board, user, acts) {
   load();
   // Al volver a la pestaña (o desbloquear el móvil) recargamos por si se perdió algún cambio
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') load(); });
+  // Recién creado: lo primero es invitar a la gente
+  if (acts.justCreated) setTimeout(openInvite, 300);
 }
 
 // ---------------------------------------------------------------------
@@ -105,7 +106,7 @@ function subscribe() {
     .on(...on('UPDATE', 'members', ({ new: m }) => { S.members.set(m.user_id, m); render(); }))
     .on(...on('DELETE', 'members', ({ old }) => {
       if (old.board_id === id && old.user_id === S.me) {
-        ask({ title: 'Este tablero se ha borrado', ok: 'Vale', cancel: null }).then(actions.leave);
+        ask({ title: 'Este tablero se ha borrado', ok: 'Vale', cancel: null }).then(actions.home);
       }
     }, false))
     .subscribe((status) => {
@@ -201,15 +202,39 @@ async function deleteBoard() {
   if (files?.length) await store.remove(files.map((f) => `${S.board.id}/${f.name}`));
   const { error } = await supabase.rpc('delete_board', { p_board: S.board.id });
   if (error) return toast(error.message);
-  actions.leave();
+  actions.home();
 }
 
-function copyLink() {
-  const url = `${location.origin}${location.pathname}?b=${S.board.code}`;
-  navigator.clipboard?.writeText(url).then(
-    () => toast('Enlace del tablero copiado'),
-    () => toast(`Código: ${S.board.code}`),
-  );
+const inviteUrl = () => `${location.origin}${location.pathname}?b=${S.board.code}`;
+
+// Invitar: enlace para copiar o compartir
+function openInvite() {
+  const dlg = document.getElementById('ask-dialog');
+  const link = el('input', { class: 'input invite-link', id: 'invite-link', readonly: true, value: inviteUrl(), 'aria-label': 'Enlace de invitación' });
+  link.onfocus = () => link.select();
+  const copy = el('button', { class: 'btn primary', type: 'button' }, el('span', { html: ICONS.copy }), 'Copiar');
+  copy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(link.value);
+      copy.replaceChildren('¡Copiado!');
+      setTimeout(() => copy.replaceChildren(el('span', { html: ICONS.copy }), 'Copiar'), 1800);
+    } catch {
+      link.focus(); link.select();
+      toast('Selecciona el enlace y cópialo');
+    }
+  };
+  const share = navigator.share && el('button', { class: 'btn', type: 'button', text: 'Compartir…', onclick: () => {
+    navigator.share({ title: S.board.name, text: `Únete al tablero "${S.board.name}"`, url: link.value }).catch(() => {});
+  } });
+  dlg.replaceChildren(el('form', { method: 'dialog', class: 'ask' },
+    el('h2', { text: 'Invitar al tablero' }),
+    el('p', { text: 'Comparte este enlace (por WhatsApp, Classroom, email…). Quien lo abra crea su cuenta y entra directamente al tablero.' }),
+    el('div', { class: 'row' }, link, copy),
+    el('p', { class: 'invite-code' }, 'O que escriban el código ', el('strong', { text: S.board.code })),
+    el('div', { class: 'actions' }, share, el('button', { class: 'btn ghost', value: 'no', text: 'Cerrar' }))));
+  dlg.onclose = null;
+  dlg.showModal();
+  copy.focus();
 }
 
 // ---------------------------------------------------------------------
@@ -239,10 +264,12 @@ function buildLayout(app) {
     el('div', { class: 'topbar-row' },
       el('div', { class: 'title' },
         el('h1', { text: S.board.name }),
-        el('button', { class: 'code-btn', type: 'button', title: 'Copiar enlace para invitar', onclick: copyLink }, el('span', { html: ICONS.copy }), `Código ${S.board.code}`),
+        el('button', { class: 'code-btn', type: 'button', title: 'Invitar a gente', onclick: openInvite }, el('span', { html: ICONS.copy }), `Código ${S.board.code}`),
         ui.adminBadge,
         ui.progress),
       el('div', { class: 'top-actions' },
+        el('button', { class: 'btn invite-btn', type: 'button', onclick: openInvite, title: 'Invitar a gente' },
+          el('span', { html: ICONS.userPlus }), el('span', { class: 'add-label', text: 'Invitar' })),
         el('button', { class: 'btn primary add-btn', type: 'button', onclick: () => newCard('todo') },
           el('span', { html: ICONS.plus }), el('span', { class: 'add-label', text: 'Nueva tarea' })),
         el('div', { class: 'me-wrap' }, ui.menuBtn, ui.menu))),
@@ -308,9 +335,11 @@ function toggleMenu() {
   const item = (text, onclick, cls = '') => el('button', { class: `menu-item ${cls}`, type: 'button', text, onclick: () => { ui.menu.hidden = true; onclick(); } });
   ui.menu.replaceChildren(
     el('div', { class: 'menu-head' }, avatar(me, S.me), el('span', { text: me?.name || '' })),
-    item('Copiar enlace de invitación', copyLink),
+    item('Invitar a gente', openInvite),
+    item('Mis tableros', actions.home),
+    item('Cambiar mi nombre', actions.rename),
     isAdmin() ? item('Borrar tablero', deleteBoard, 'danger') : item('Entrar como admin (PIN)', becomeAdmin),
-    item('Cambiar de tablero', actions.leave),
+    item('Salir de este tablero', actions.leave),
     item('Cerrar sesión', actions.logout));
   ui.menu.hidden = !ui.menu.hidden;
 }
@@ -326,10 +355,8 @@ function openAssign(card, anchor) {
       .sort((a, b) => (a[0] === S.me ? -1 : b[0] === S.me ? 1 : a[1].name.localeCompare(b[1].name)));
     list.replaceChildren(...people.map(([uid, m]) => {
       const on = current.has(uid);
-      const allowed = !on || uid === S.me || card.created_by === S.me || isAdmin();
       return el('button', {
-        class: `pop-item ${on ? 'on' : ''}`, type: 'button', disabled: !allowed,
-        title: allowed ? '' : 'Solo esa persona, el autor o el admin pueden quitarla',
+        class: `pop-item ${on ? 'on' : ''}`, type: 'button',
         onclick: () => { (on ? unassign : assign)(card, uid); draw(); },
       }, avatar(m, uid, 'sm'), el('span', { text: uid === S.me ? `${m.name} (tú)` : m.name }), el('span', { class: 'check', text: on ? '✓' : '' }));
     }));
@@ -403,7 +430,7 @@ function render() {
       const ids = [...assigneesOf(card.id)].sort();
       const people = ids.map((u) => [u, S.members.get(u)]);
       if (people.some(([, m]) => !m)) refreshMembers();
-      const editable = canEdit(card);
+      const editable = true; // cualquier miembro puede editar y borrar
       const key = JSON.stringify([card, people, editable]);
       let entry = cache.get(card.id);
       if (!entry || entry.key !== key) {

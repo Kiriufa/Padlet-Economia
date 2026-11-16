@@ -10,6 +10,14 @@ create extension if not exists pgcrypto with schema extensions;
 -- Tablas
 -- ---------------------------------------------------------------------
 
+-- Perfil: el nombre que cada persona elige mostrar
+create table if not exists public.profiles (
+  id         uuid primary key references auth.users on delete cascade,
+  name       text not null check (char_length(name) between 1 and 60),
+  avatar_url text,
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.boards (
   id             uuid primary key default gen_random_uuid(),
   code           text not null unique,
@@ -85,10 +93,16 @@ $$;
 -- Row Level Security
 -- ---------------------------------------------------------------------
 
+alter table public.profiles       enable row level security;
 alter table public.boards         enable row level security;
 alter table public.members        enable row level security;
 alter table public.cards          enable row level security;
 alter table public.card_assignees enable row level security;
+
+-- profiles: cada uno ve el suyo; se escribe con set_my_name()
+drop policy if exists "profiles_select_own" on public.profiles;
+create policy "profiles_select_own" on public.profiles
+  for select to authenticated using (id = auth.uid());
 
 -- boards: nadie la lee directamente (así el hash del PIN nunca sale).
 -- Todo pasa por las funciones RPC de abajo.
@@ -108,19 +122,19 @@ create policy "cards_insert" on public.cards
   for insert to authenticated
   with check (public.is_member(board_id) and created_by = auth.uid());
 
+-- Cualquier miembro del tablero puede editar y borrar cualquier tarjeta
 drop policy if exists "cards_update" on public.cards;
 create policy "cards_update" on public.cards
   for update to authenticated
-  using (created_by = auth.uid() or public.is_admin(board_id))
-  with check (public.is_member(board_id) and (created_by = auth.uid() or public.is_admin(board_id)));
+  using (public.is_member(board_id))
+  with check (public.is_member(board_id));
 
 drop policy if exists "cards_delete" on public.cards;
 create policy "cards_delete" on public.cards
   for delete to authenticated
-  using (created_by = auth.uid() or public.is_admin(board_id));
+  using (public.is_member(board_id));
 
--- card_assignees: cualquiera del tablero puede asignar a gente del tablero.
--- Quitar: uno mismo, el autor de la tarjeta o el admin.
+-- card_assignees: cualquiera del tablero puede asignar y quitar a gente del tablero.
 drop policy if exists "assignees_select" on public.card_assignees;
 create policy "assignees_select" on public.card_assignees
   for select to authenticated using (public.is_member(board_id));
@@ -137,17 +151,12 @@ create policy "assignees_insert" on public.card_assignees
 drop policy if exists "assignees_delete" on public.card_assignees;
 create policy "assignees_delete" on public.card_assignees
   for delete to authenticated
-  using (
-    public.is_member(board_id) and (
-      user_id = auth.uid()
-      or public.is_admin(board_id)
-      or exists (select 1 from public.cards c where c.id = card_id and c.created_by = auth.uid())
-    )
-  );
+  using (public.is_member(board_id));
 
 -- Permisos de tabla (RLS decide qué filas). Los anónimos no tocan nada.
-revoke all on public.boards, public.members, public.cards, public.card_assignees from anon;
-revoke all on public.boards from authenticated;
+revoke all on public.profiles, public.boards, public.members, public.cards, public.card_assignees from anon;
+revoke all on public.boards, public.profiles from authenticated;
+grant select on public.profiles to authenticated;
 grant select on public.members to authenticated;
 grant select, insert, update, delete on public.cards to authenticated;
 grant select, insert, delete on public.card_assignees to authenticated;
@@ -158,9 +167,10 @@ grant select, insert, delete on public.card_assignees to authenticated;
 
 -- Datos del usuario de Google (nombre y foto) desde su sesión
 create or replace function public._my_profile(out p_name text, out p_avatar text)
-language sql stable set search_path = '' as $$
+language sql stable security definer set search_path = '' as $$
   select
     coalesce(
+      (select name from public.profiles where id = auth.uid()),
       nullif(auth.jwt() -> 'user_metadata' ->> 'full_name', ''),
       nullif(auth.jwt() -> 'user_metadata' ->> 'name', ''),
       split_part(coalesce(auth.jwt() ->> 'email', 'Usuario'), '@', 1)
@@ -252,6 +262,38 @@ begin
   if not found then raise exception 'Tarjeta no encontrada'; end if;
 end $$;
 
+-- Elegir o cambiar el nombre que ven los demás (se actualiza en todos tus tableros)
+create or replace function public.set_my_name(p_name text)
+returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_name text := trim(p_name);
+  v_avatar text := coalesce(auth.jwt() -> 'user_metadata' ->> 'avatar_url', auth.jwt() -> 'user_metadata' ->> 'picture');
+begin
+  if auth.uid() is null then raise exception 'Debes iniciar sesión'; end if;
+  if coalesce(char_length(v_name), 0) not between 1 and 60 then raise exception 'El nombre debe tener entre 1 y 60 caracteres'; end if;
+  insert into public.profiles (id, name, avatar_url) values (auth.uid(), v_name, v_avatar)
+  on conflict (id) do update set name = excluded.name, avatar_url = excluded.avatar_url, updated_at = now();
+  update public.members set name = v_name where user_id = auth.uid() and name is distinct from v_name;
+end $$;
+
+-- Mis tableros
+create or replace function public.my_boards()
+returns table (id uuid, code text, name text, is_admin boolean, cards bigint)
+language sql stable security definer set search_path = '' as $$
+  select b.id, b.code, b.name, m.is_admin,
+         (select count(*) from public.cards c where c.board_id = b.id)
+  from public.members m join public.boards b on b.id = m.board_id
+  where m.user_id = auth.uid()
+  order by m.joined_at desc;
+$$;
+
+-- Salir de un tablero (deja de aparecer en "Mis tableros")
+create or replace function public.leave_board(p_board uuid)
+returns void language sql security definer set search_path = '' as $$
+  delete from public.card_assignees where board_id = p_board and user_id = auth.uid();
+  delete from public.members where board_id = p_board and user_id = auth.uid();
+$$;
+
 -- Borrar el tablero entero (solo admin)
 create or replace function public.delete_board(p_board uuid)
 returns void language plpgsql security definer set search_path = '' as $$
@@ -262,10 +304,13 @@ end $$;
 
 revoke execute on function public.create_board(text, text), public.join_board(text),
   public.claim_admin(uuid, text), public.move_card(uuid, text, double precision),
-  public.delete_board(uuid), public._my_profile() from public, anon;
+  public.delete_board(uuid), public._my_profile(), public.set_my_name(text),
+  public.my_boards(), public.leave_board(uuid) from public, anon;
+revoke execute on function public._my_profile() from authenticated;
 grant execute on function public.create_board(text, text), public.join_board(text),
   public.claim_admin(uuid, text), public.move_card(uuid, text, double precision),
-  public.delete_board(uuid) to authenticated;
+  public.delete_board(uuid), public.set_my_name(text), public.my_boards(),
+  public.leave_board(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- Tiempo real
@@ -318,12 +363,7 @@ create policy "uploads_insert" on storage.objects
 drop policy if exists "uploads_delete" on storage.objects;
 create policy "uploads_delete" on storage.objects
   for delete to authenticated
-  using (
-    bucket_id = 'uploads' and (
-      owner_id = auth.uid()::text
-      or public.board_role((storage.foldername(name))[1]) = 'admin'
-    )
-  );
+  using (bucket_id = 'uploads' and public.board_role((storage.foldername(name))[1]) is not null);
 
 -- Para poder borrar, Storage necesita poder "ver" la fila
 drop policy if exists "uploads_select" on storage.objects;
