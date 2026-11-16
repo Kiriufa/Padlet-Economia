@@ -1082,3 +1082,6 @@ button.collage-cell:hover img { transform: scale(1.04); }
 @media (pointer: coarse) {
   .chip-comments { min-height: 44px; min-width: 52px; padding-inline: 12px; font-size: 13px; }
 }
+/* Mientras se arrastra: todas las columnas llegan hasta abajo (se suelta en cualquier parte) */
+body.is-dragging .board { align-items: stretch; }
+.placeholder-gap { pointer-events: none; }

@@ -442,7 +442,7 @@ create policy "uploads_select" on storage.objects
 
 -- ---------------------------------------------------------------------
 -- Deshacer: volver a poner una tarjeta borrada (con su autor y sus encargados).
-(también en supabase/migrations/003_restore.sql)
+-- (también en supabase/migrations/003_restore.sql)
 
 create or replace function public.restore_card(p_card jsonb, p_assignees uuid[] default '{}')
 returns public.cards language plpgsql security definer set search_path = '' as $$

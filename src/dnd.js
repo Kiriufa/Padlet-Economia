@@ -17,6 +17,7 @@ const FRICTION_TORQUE = 0.000003; // cuánto hace girar el rozamiento
 const SPRING = 0.006; // tendencia a enderezarse
 const DAMPING = 0.16; // amortiguación del giro
 const MAX_ANGLE = 0.3; // ~17°
+const GAP = 10; // separación entre tarjetas (la de .cards en styles.css)
 
 export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
   let s = null;
@@ -81,7 +82,7 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
     const r = card.getBoundingClientRect();
     Object.assign(s, {
       active: true, offX: s.x - r.left, offY: s.y - r.top, w: r.width, h: r.height,
-      angle: 0, spin: 0, scale: 1, lastX: s.px, lastY: s.py, moved: false,
+      angle: 0, spin: 0, scale: 1, lastX: s.px, lastY: s.py, moved: false, gx: s.px, gy: s.py,
     });
     s.ghost = card.cloneNode(true);
     s.ghost.classList.add('ghost');
@@ -97,6 +98,8 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
     card.classList.add('dragging');
     card.classList.remove('pressing');
     document.body.classList.add('is-dragging');
+    // Las columnas llegan hasta abajo de la pantalla: se puede soltar en cualquier parte de ellas
+    root.style.minHeight = `${Math.max(root.offsetHeight, Math.round(innerHeight - root.getBoundingClientRect().top))}px`;
     navigator.vibrate?.(15);
     onStart();
     highlight();
@@ -107,8 +110,10 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
   function frame() {
     if (!s?.active) return;
     const { px, py } = s;
-    const vx = px - s.lastX, vy = py - s.lastY;
-    s.lastX = px; s.lastY = py;
+    // La tarjeta va pegada al punto por donde se cogió
+    s.gx = px; s.gy = py;
+    const vx = s.gx - s.lastX, vy = s.gy - s.lastY;
+    s.lastX = s.gx; s.lastY = s.gy;
     if (reduced()) {
       s.angle = 0; s.scale = 1;
     } else {
@@ -122,7 +127,7 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
       s.angle = Math.max(-MAX_ANGLE, Math.min(MAX_ANGLE, s.angle + s.spin));
       s.scale += (1.04 - s.scale) * 0.25;
     }
-    s.ghost.style.transform = `translate(${px - s.offX}px, ${py - s.offY}px) rotate(${s.angle.toFixed(4)}rad) scale(${s.scale.toFixed(3)})`;
+    s.ghost.style.transform = `translate(${(s.gx - s.offX).toFixed(1)}px, ${(s.gy - s.offY).toFixed(1)}px) rotate(${s.angle.toFixed(4)}rad) scale(${s.scale.toFixed(3)})`;
 
     // No desplazar hasta que la tarjeta se haya movido un poco
     if (!s.moved) s.moved = Math.hypot(px - s.x, py - s.y) > 40;
@@ -176,7 +181,9 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
     }
     if (tab) return;
 
-    const list = under?.closest('.column')?.querySelector('.cards');
+    // La columna se elige por la posición horizontal: vale toda la columna, de arriba abajo,
+    // y también el hueco entre columnas o la parte de debajo (se coge la más cercana)
+    const list = columnAt(px, under)?.querySelector('.cards');
     if (!list) return;
     const siblings = [...list.querySelectorAll('.card:not(.dragging)')];
     const before = siblings.find((c) => {
@@ -187,17 +194,53 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
     if (!already) movePlaceholder(list, before);
   }
 
+  function columnAt(px, under) {
+    const direct = under?.closest('.column');
+    if (direct && root.contains(direct)) return direct;
+    let best = null, dist = Infinity;
+    for (const c of root.querySelectorAll('.column')) {
+      const r = c.getBoundingClientRect();
+      if (r.right < 0 || r.left > innerWidth) continue; // fuera de la pantalla (móvil)
+      const d = px < r.left ? r.left - px : px > r.right ? px - r.right : 0;
+      if (d < dist) { dist = d; best = c; }
+    }
+    return best;
+  }
+
   function movePlaceholder(list, before, atStart = false) {
-    flip(() => {
-      if (atStart) list.prepend(s.placeholder);
-      else list.insertBefore(s.placeholder, before);
-    });
+    const ph = s.placeholder;
+    const from = ph.parentElement;
+    const put = () => { if (atStart) list.prepend(ph); else list.insertBefore(ph, before); };
+    if (from && from !== list && !reduced()) {
+      // Cambio de columna: el hueco se cierra suavemente en la columna de origen
+      // y se abre en la nueva, empujando a las tarjetas poco a poco
+      const h = ph.offsetHeight;
+      const gap = document.createElement('div');
+      gap.className = 'placeholder-gap';
+      gap.style.height = `${h}px`;
+      from.insertBefore(gap, ph);
+      put();
+      const close = gap.animate([{ height: `${h}px`, marginBottom: '0px', opacity: 1 }, { height: '0px', marginBottom: `${-GAP}px`, opacity: 0 }],
+        { duration: 240, easing: EASE, fill: 'forwards' });
+      close.onfinish = close.oncancel = () => gap.remove();
+      ph.animate([{ height: '0px', marginBottom: `${-GAP}px`, opacity: 0 }, { height: `${h}px`, marginBottom: '0px', opacity: 1 }],
+        { duration: 240, easing: EASE });
+    } else {
+      flip(put);
+    }
     highlight();
   }
 
   function highlight() {
     const col = s.placeholder.closest('.column');
-    for (const c of root.querySelectorAll('.column')) c.classList.toggle('drop-target', c === col);
+    for (const c of root.querySelectorAll('.column')) {
+      const on = c === col;
+      if (on && !c.classList.contains('drop-target') && !reduced()) {
+        // Pequeño "latido" al entrar en una columna nueva
+        c.animate([{ boxShadow: '0 0 0 0 rgb(45 91 215 / 35%)' }, { boxShadow: '0 0 0 10px rgb(45 91 215 / 0%)' }], { duration: 450, easing: 'ease-out' });
+      }
+      c.classList.toggle('drop-target', on);
+    }
   }
 
   // FLIP: anima las tarjetas que cambian de sitio al moverse el hueco
@@ -245,16 +288,29 @@ export function initDnd(root, { onStart, onEnd, onDrop, onTab }) {
       landing = false;
     };
 
-    // Aterrizaje: la tarjeta vuela hasta el hueco
+    // Aterrizaje: la tarjeta vuela hasta el hueco (más tiempo cuanto más lejos) y se asienta
+    placeholder.getAnimations().forEach((a) => a.finish());
+    root.querySelectorAll('.placeholder-gap').forEach((g) => g.remove());
     const r = placeholder.getBoundingClientRect();
-    if (reduced() || !r.width) return done();
+    const finishAll = () => {
+      root.style.minHeight = '';
+      done();
+      if (target && !reduced()) {
+        requestAnimationFrame(() => {
+          const n = root.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
+          n?.animate([{ transform: 'scale(1.03)' }, { transform: 'scale(.99)' }, { transform: 'none' }], { duration: 260, easing: 'ease-out' });
+        });
+      }
+    };
+    if (reduced() || !r.width) return finishAll();
     landing = true;
+    const dist = Math.hypot(r.left - (st.gx - st.offX), r.top - (st.gy - st.offY));
     const anim = ghost.animate([
       { transform: ghost.style.transform },
       { transform: `translate(${r.left}px, ${r.top}px) rotate(0rad) scale(1)` },
-    ], { duration: 220, easing: EASE, fill: 'forwards' });
-    anim.onfinish = done;
-    anim.oncancel = done;
+    ], { duration: Math.round(Math.min(380, 180 + dist * 0.35)), easing: 'cubic-bezier(.25, 1.15, .4, 1)', fill: 'forwards' });
+    anim.onfinish = finishAll;
+    anim.oncancel = finishAll;
   }
 
   function reset() {
